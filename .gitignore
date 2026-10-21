@@ -1,0 +1,5 @@
+# dati personali: mai nel repo pubblico
+dev/*
+!dev/README.md
+*.local.json
+.DS_Store
