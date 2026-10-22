@@ -167,27 +167,20 @@
         "object",
         "null"
       ],
+      "description": "Supplenze a carico del docente, da supplenze.json su Drive; mostrate nelle celle dell'orario",
       "properties": {
-        "stato": {
-          "enum": [
-            "nessuna",
-            "presenti",
-            "da_aprire"
-          ]
-        },
-        "titolo": {
-          "type": "string"
-        },
-        "nota": {
-          "type": "string"
-        },
         "ore": {
           "type": "array",
           "items": {
             "type": "object",
+            "required": [
+              "data",
+              "ora"
+            ],
             "properties": {
               "data": {
-                "type": "string"
+                "type": "string",
+                "format": "date"
               },
               "ora": {
                 "type": "integer"
@@ -196,6 +189,9 @@
                 "type": "string"
               },
               "aula": {
+                "type": "string"
+              },
+              "sostituisce": {
                 "type": "string"
               }
             }
@@ -355,6 +351,38 @@
           },
           "s": {
             "type": "string"
+          }
+        }
+      }
+    },
+    "report": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Report lezioni del prossimo giorno di scuola, generato quando tutte le firme del giorno risultano firmate (o alle 18:00) e ricontrollato alle 20:00",
+      "properties": {
+        "data": {
+          "type": "string",
+          "format": "date"
+        },
+        "generato": {
+          "type": "string"
+        },
+        "controllo20": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nessunaModifica": {
+          "type": "boolean"
+        },
+        "inCorso": {},
+        "classi": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
           }
         }
       }

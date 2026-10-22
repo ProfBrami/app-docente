@@ -13,8 +13,7 @@ const CMD = {
   orario: 'Mostrami l\'orario dei prossimi giorni con classe e laboratorio per ogni ora (skill orario-docente-promemoria).',
   firme: 'Scrivi le firme di oggi per Classeviva (skill firme-registro-classeviva): controlla prima Classroom in tempo reale.',
   report: 'Prepara le lezioni del prossimo giorno di scuola e aggiorna il Report lezioni (skill prepara-lezioni).',
-  circolari: 'Controlla le nuove circolari in posta/ClasseViva e gestiscile con la skill gestione-circolari-ciusa.',
-  supplenze: 'Controlla le variazioni d\'orario: ci sono supplenze a mio nome? (skill gestione-circolari-ciusa)'
+  circolari: 'Controlla le nuove circolari in posta/ClasseViva e gestiscile con la skill gestione-circolari-ciusa.'
 };
 const FASI = [
   {id:'mattina',nome:'Mattina',range:'06:00 – 13:55',desc:'Orario e lezioni'},
@@ -22,11 +21,11 @@ const FASI = [
   {id:'sera',nome:'Sera',range:'dalle 19:55',desc:'Report lezioni di domani'}
 ];
 const ORDINI = {
-  mattina:['orario','firme','circolari','scadenze','supplenze','classi','report','ricond','orient','ut','note'],
-  pomeriggio:['firme','circolari','scadenze','orario','supplenze','report','classi','ricond','orient','ut','note'],
-  sera:['report','orario','circolari','scadenze','supplenze','firme','classi','ricond','orient','ut','note']
+  mattina:['orario','firme','circolari','scadenze','classi','report','ricond','orient','ut','note'],
+  pomeriggio:['firme','circolari','scadenze','orario','report','classi','ricond','orient','ut','note'],
+  sera:['report','orario','circolari','scadenze','firme','classi','ricond','orient','ut','note']
 };
-const NUM = {orario:'01',firme:'02',report:'03',circolari:'04',scadenze:'05',supplenze:'06',classi:'07',ricond:'08',orient:'09',ut:'10',note:'11'};
+const NUM = {orario:'01',firme:'02',report:'03',circolari:'04',scadenze:'05',classi:'06',ricond:'07',orient:'08',ut:'09',note:'10'};
 const FONTI = [['gmail','Gmail'],['classroom','Classroom'],['calendar','Calendar'],['classeviva','ClasseViva']];
 const STATI = ['Aperta','In corso','Chiusa'];
 const LABS = ['Arrakis','Matrix','Lab. 21','Neo Tokio','Skynet','Altro'];
@@ -38,7 +37,7 @@ const LOCALE = ['localhost','127.0.0.1'].includes(location.hostname);
 const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const MAC = !IOS && /Macintosh/.test(navigator.userAgent);
 const claudeLink = t => `href="${(MAC ? 'claude://claude.ai/new?q=' : 'https://claude.ai/new?q=') + encodeURIComponent(t)}"${MAC ? '' : ' target="_blank" rel="noopener"'}`;
-const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda'};
+const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda',nascoste:'pd_circ_nascoste'};
 
 const CORNERS = '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
 const ICON_ALERT = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>';
@@ -79,7 +78,7 @@ const S = {
   data: null, loading: false, refreshing: false, error: null, lastFetch: 0, offline: false, cachedAt: null,
   mock: LOCALE && (Q.has('mock') || ls.get(K.endpoint) === 'mock'),
   setup: false, setupErr: '', pin: null, copied: null,
-  done: ls.json(K.done, {}), mod: ls.json(K.mod, {}), coda: ls.json(K.coda, []), tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
+  done: ls.json(K.done, {}), mod: ls.json(K.mod, {}), coda: ls.json(K.coda, []), nascoste: ls.json(K.nascoste, []), ultimaFirmata: 0, tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
   utLab: LABS[0], utText: '',
   variante: ls.get(K.variante, 'A'), tema: ls.get(K.tema, 'auto')
 };
@@ -109,6 +108,9 @@ async function carica(refresh) {
     const { j, daCache } = await scarica(urlDati(refresh));
     S.data = j; S.offline = daCache; S.cachedAt = daCache ? (j.meta.aggiornato || null) : null;
     if (!daCache && !S.mock) { ls.set(K.last, j); svuotaCoda(); }
+    // lo stato "firmata" confermato dal backend sostituisce quello locale (vale per tutti i dispositivi)
+    Object.keys(S.done).forEach(k => { const [y, m, g, o] = k.split('-'), r = firmaRec(((j.firme || {})[y + '-' + m + '-' + g] || {})[o]); if (!!r.firmata === !!S.done[k] && !S.coda.some(q => q.azione === 'firmata')) delete S.done[k]; });
+    ls.set(K.done, S.done);
   } catch (err) {
     S.error = err.auth ? 'Codice di accesso non valido: controlla il collegamento.' : 'Endpoint non raggiungibile (' + (err.message || err) + ').';
     if (!err.auth) {
@@ -245,7 +247,10 @@ function renderDashboard() {
   const crOk = fonte('classroom').ok;
   const agg = d.meta.aggiornato ? new Date(d.meta.aggiornato) : null;
   const aggTxt = agg && !isNaN(agg) ? dmy(agg) + ' ' + hm(agg) : 'data sconosciuta';
-  const ctx = { d, now, M, mins, today, todayL, todayB, autoFase, fase, nextDay, ndL, ndLabel, crOk, agg, aggTxt };
+  const firmeOggi = (d.firme && d.firme[iso(today)]) || {};
+  const fatta = b => { const k = iso(today) + '-' + b.first; return k in S.done ? !!S.done[k] : !!firmaRec(firmeOggi[String(b.first)]).firmata; };
+  const rep = reportStato(d, M, today, mins);
+  const ctx = { d, now, M, mins, today, todayL, todayB, autoFase, fase, nextDay, ndL, ndLabel, crOk, agg, aggTxt, fatta, firmeOggi, rep };
 
   /* barra Adesso */
   let A = { k: 'Adesso', t: '', s: '', bg: 'transparent', fg: 'var(--color-text)', bd: 'var(--color-divider)' };
@@ -261,10 +266,10 @@ function renderDashboard() {
   } else if (!todayL.length) {
     A = { ...A, k: 'Giorno libero', t: 'Nessuna lezione oggi', s: 'Prossime lezioni: ' + ndLabel + ' · ' + ndL.map(l => l.cls).join(', ') };
   } else if (mins < 1195) {
-    const left = todayB.filter(b => !S.done[iso(today) + '-' + b.first]).length;
-    A = { ...A, k: mins < 840 ? 'Lezioni concluse' : 'Pomeriggio', t: left ? left + ' firme da apporre sul registro' : 'Tutte le firme di oggi sono apposte', s: 'Report di ' + ndLabel + ' dalle 19:55' };
+    const left = todayB.filter(b => !fatta(b)).length;
+    A = { ...A, k: mins < 840 ? 'Lezioni concluse' : 'Pomeriggio', t: left ? left + ' firme da apporre sul registro' : 'Tutte le firme di oggi sono apposte', s: 'Report di ' + rep.label + ': ' + rep.breve };
   } else {
-    A = { ...A, k: 'Sera', t: 'Report lezioni di ' + ndLabel + (crOk ? '' : ': dati Classroom non aggiornati'), s: ndL.map(l => l.n + 'ª ' + l.cls).join(' · ') };
+    A = { ...A, k: 'Sera', t: 'Report lezioni di ' + rep.label + ': ' + rep.breve, s: ndL.map(l => l.n + 'ª ' + l.cls).join(' · ') };
   }
 
   const isB = S.variante === 'B';
@@ -286,7 +291,7 @@ function renderDashboard() {
       ${isB ? renderTimeline(ctx) : ''}
       <main class="grid">
         ${secOrario(ctx, c)}${secFirme(ctx, c)}${secReport(ctx, c)}${secCircolari(ctx, c)}${secScadenze(ctx, c)}
-        ${secSupplenze(ctx, c)}${secClassi(ctx, c)}${secRicond(ctx, c)}${secOrient(ctx, c)}${secUT(ctx, c)}${secNote(ctx, c)}
+        ${secClassi(ctx, c)}${secRicond(ctx, c)}${secOrient(ctx, c)}${secUT(ctx, c)}${secNote(ctx, c)}
       </main>
     </div>
     ${renderFoot()}
@@ -296,8 +301,8 @@ function renderDashboard() {
 function renderTimeline(x) {
   const { mins, todayL, todayB, autoFase, ndLabel, ndL, M, today } = x;
   const tl = todayL.map(l => { const st = mins >= tm(l.e) ? 'done' : mins >= tm(l.s) ? 'now' : 'next'; return { time: l.s, label: l.n + 'ª ora · ' + l.cls, sub: (l.lab ? l.lab + ' · ' : '') + 'firma alle ' + l.e + ' · bozza alle ' + hhmm(tm(l.e) + PRONTA), st }; });
-  tl.push({ time: '14:00', label: 'Firme registro', sub: !M.has ? 'Orario non disponibile' : todayB.length ? todayB.filter(b => !S.done[iso(today) + '-' + b.first]).length + ' firme da apporre · bozze 5 min dopo ogni ora' : 'Nessuna lezione oggi', st: mins >= 1195 ? 'done' : mins >= 840 ? 'now' : 'next', pick: 'pomeriggio' });
-  tl.push({ time: '19:55', label: 'Report lezioni', sub: 'Per ' + ndLabel, st: mins >= 1195 ? 'now' : 'next', pick: 'sera' });
+  tl.push({ time: '14:00', label: 'Firme registro', sub: !M.has ? 'Orario non disponibile' : todayB.length ? todayB.filter(b => !x.fatta(b)).length + ' firme da apporre · bozze 5 min dopo ogni ora' : 'Nessuna lezione oggi', st: mins >= 1195 ? 'done' : mins >= 840 ? 'now' : 'next', pick: 'pomeriggio' });
+  tl.push({ time: x.rep.pronto ? hm(new Date(x.rep.pronto.generato)) : '18:00', label: 'Report lezioni', sub: 'Per ' + x.rep.label + ' · ' + x.rep.breve, st: x.rep.pronto ? 'now' : 'next', pick: 'sera' });
   const li = tl.map(t => {
     const dot = t.st === 'now' ? 'var(--color-accent)' : t.st === 'done' ? 'color-mix(in srgb,var(--color-accent) 35%,transparent)' : 'transparent';
     const attrs = t.pick ? ` class="click" data-act="pickfase" data-id="${t.pick}" data-auto="${autoFase}" role="button" tabindex="0"` : '';
@@ -312,7 +317,9 @@ function renderTimeline(x) {
 }
 
 function secOrario(x, c) {
-  const { M, mins, today, todayL, ndLabel } = x;
+  const { M, mins, today, todayL, ndLabel, d: dati } = x;
+  const supp = ((dati.supplenze && dati.supplenze.ore) || []).filter(o => o && o.data && o.ora);
+  let suppInVista = false;
   if (!M.has) return sec('orario', c, head('orario', c, 'Orario · prossimi giorni') + empty('Nessun dato da orario.json', 'Esegui la skill orario-docente-promemoria: salva orario.json nella cartella Drive “Dashboard Docente/dati”.') + cmdFooter('orario', false));
   const cols = `grid-template-columns:72px repeat(${M.ore.length},minmax(52px,1fr))`;
   let html = `<div class="og" style="${cols}"><span></span>${M.ore.map(h => `<span class="og-h"><b>${h.n}ª</b><span class="m60">${h.s}–${h.e}</span></span>`).join('')}</div>`;
@@ -320,8 +327,15 @@ function secOrario(x, c) {
   for (let i = 0; rows < 6 && i < 8; i++) {
     const d = addDays(today, i); if (d.getDay() === 0) continue; rows++;
     const ls_ = M.lessons(d), byN = {}; ls_.forEach(l => { byN[l.n] = l; });
+    const suppGiorno = supp.filter(o => o.data === iso(d));
     const label = i === 0 ? 'Oggi' : i === 1 ? 'Domani' : G3[d.getDay()] + ' ' + d.getDate();
-    const cells = !ls_.length ? '<span class="og-free m60">Giorno libero</span>' : M.ore.map(h => {
+    const cells = !ls_.length && !suppGiorno.length ? '<span class="og-free m60">Giorno libero</span>' : M.ore.map(h => {
+      const su = suppGiorno.find(o => Number(o.ora) === h.n);
+      if (su) { // supplenza a mio carico: bordo tratteggiato accento, al posto della cella normale
+        suppInVista = true;
+        const past = i === 0 && mins >= tm(h.e);
+        return `<span class="og-c og-sup" style="opacity:${past ? 0.45 : 1}" title="${esc('Supplenza ' + (su.classe || '') + (su.aula ? ' · ' + su.aula : '') + (su.sostituisce ? ' · al posto di ' + su.sostituisce : ''))}"><b>${esc(su.classe || 'Suppl.')}</b><span>Supplenza${su.aula ? ' · ' + esc(su.aula) : ''}</span></span>`;
+      }
       const l = byN[h.n], isNow = i === 0 && l && mins >= tm(h.s) && mins < tm(h.e), past = i === 0 && mins >= tm(h.e);
       const bd = l ? (isNow ? 'var(--color-accent)' : 'var(--color-divider)') : 'transparent';
       const bg = isNow ? 'var(--color-accent)' : l ? 'transparent' : 'color-mix(in srgb,var(--color-text) 3%,transparent)';
@@ -334,6 +348,7 @@ function secOrario(x, c) {
   const prom = pend.length ? pend.map(l => l.e + ' firma ' + l.cls).join(' · ') + '  (avviso 5 min prima della fine dell\'ora)'
     : todayL.length ? 'Lezioni di oggi concluse: le firme sono nella sezione 02.' : 'Oggi nessuna ora da firmare. Prossimo giorno: ' + ndLabel + '.';
   const tag = M.vigore ? `<span class="tag tag-accent">In vigore dal ${esc(M.vigore)}</span>` : '';
+  if (suppInVista) html += '<span class="small m62" style="display:block;margin-top:6px">Bordo tratteggiato: supplenza a tuo carico.</span>';
   return sec('orario', c, head('orario', c, 'Orario · prossimi giorni', tag) + `<div class="ox">${html}</div>
     <div class="col" style="gap:6px;font-size:13px"><span class="kicker">Promemoria firma a fine ora</span><span style="white-space:pre-wrap">${esc(prom)}</span></div>` + cmdFooter('orario', false));
 }
@@ -346,9 +361,9 @@ function secFirme(x, c) {
   const testi = (d.firme && d.firme[iso(today)]) || {};
   let nDone = 0;
   const items = todayB.map(b => {
-    const key = iso(today) + '-' + b.first, done = !!S.done[key]; if (done) nDone++;
+    const key = iso(today) + '-' + b.first, done = x.fatta(b); if (done) nDone++;
     const rec = firmaRec(testi[String(b.first)]), avail = mins >= pronta(b);
-    const inCoda = S.coda.find(q => q.data === iso(today) && q.ora === b.first);
+    const inCoda = S.coda.find(q => (q.azione || 'firma') === 'firma' && q.data === iso(today) && q.ora === b.first);
     const valore = S.mod[key] ?? (inCoda ? inCoda.testo : rec.testo) ?? '';
     const tags = [];
     if (rec.stato === 'generata') tags.push(['tag-accent', 'Bozza generata' + (rec.generata ? ' alle ' + hm(new Date(rec.generata)) : '')]);
@@ -371,7 +386,7 @@ function secFirme(x, c) {
       ${body}
       <div class="row">${puoCopiare ? `<button class="btn btn-primary" data-act="copyfirma" data-key="${key}" data-data="${iso(today)}" data-ora="${b.first}" data-cls="${esc(b.cls)}">${S.copied === 'f-' + key ? 'Copiata ✓' : 'Copia firma'}</button>` : ''}
         ${rec.bozza && valore !== rec.bozza ? `<button class="btn btn-ghost" data-act="ripristina" data-key="${key}" data-data="${iso(today)}" data-ora="${b.first}">Ripristina bozza</button>` : ''}
-        <button class="btn btn-ghost" data-act="firma" data-key="${key}">${done ? 'Firmata ✓ (annulla)' : 'Segna come firmata'}</button></div>
+        <button class="btn btn-ghost" data-act="firma" data-key="${key}" data-data="${iso(today)}" data-ora="${b.first}" data-val="${done ? 0 : 1}">${done ? 'Firmata ✓ (annulla)' : 'Segna come firmata'}</button></div>
     </article>`;
   }).join('');
   const prossima = todayB.find(b => mins < pronta(b));
@@ -385,41 +400,51 @@ function secFirme(x, c) {
   return sec('firme', c, inner);
 }
 
+// Stato del report: quello pronto per il prossimo giorno di scuola, oppure in attesa/in preparazione.
+function reportStato(d, M, today, mins) {
+  const todayL = M.lessons(today), fine = todayL.length ? tm(todayL[todayL.length - 1].e) : 0;
+  const r = d.report || null, oggiIso = iso(today);
+  // fino alla fine delle lezioni di oggi resta utile il report di oggi; poi si guarda al prossimo giorno
+  const target = r && r.data === oggiIso && r.generato && mins < fine ? today : M.nextSchool(today);
+  const tIso = iso(target), pronto = r && r.data === tIso && r.generato ? r : null;
+  const inCorso = !!(r && (r.inCorso === tIso || (r.data === tIso && r.inCorso)));
+  const testi = (d.firme && d.firme[oggiIso]) || {};
+  const mancano = M.blocks(today).filter(b => { const k = oggiIso + '-' + b.first; return !(k in S.done ? S.done[k] : firmaRec(testi[String(b.first)]).firmata); }).length;
+  const breve = pronto ? 'pronto' : inCorso ? 'in preparazione' : mancano ? 'appena segni le ' + mancano + ' firme mancanti (al più tardi alle 18:00)' : M.blocks(today).length ? 'in preparazione' : 'alle 18:00';
+  return { target, label: GG[target.getDay()] + ' ' + dmy(target), pronto, inCorso, mancano, breve };
+}
+
 function secReport(x, c) {
-  const { M, mins, today, todayL, nextDay, crOk, d, aggTxt } = x;
-  let target = nextDay, avail = mins >= 1195;
-  if (mins < 480 && todayL.length) { target = today; avail = true; }
-  const titolo = 'Report lezioni · ' + GG[target.getDay()] + ' ' + dmy(target);
+  const { M, d, rep } = x;
+  const titolo = 'Report lezioni · ' + rep.label;
   if (!M.has) return sec('report', c, head('report', c, esc(titolo)) + empty('Nessun dato da orario.json', 'Il report parte dalle classi e dai laboratori dell\'orario.') + cmdFooter('report', true));
-  const classi = d.classi || {};
-  let tutte = true;
-  const cards = M.blocks(target).map(b => {
-    const k = classi[b.cls]; const full = avail && !!k; if (!k) tutte = false;
-    const lab = [b.lab, k && k.co].filter(Boolean).join(' · ');
-    let body = '';
-    if (full) {
+  const p = rep.pronto;
+  const cards = M.blocks(rep.target).map(b => {
+    const k = p && p.classi && p.classi[b.cls];
+    let body;
+    if (k && !k.errore) {
       const rows = [['Argomento', [k.lang, k.arg].filter(Boolean).join(' · ')], ['Ultimo', k.ultimo], ['Prossimo', k.prossimo], ['Perché', k.motivo]].filter(r => r[1]);
-      body += rows.length ? `<dl class="dl">${rows.map(r => `<dt>${r[0]}</dt><dd${r[0] === 'Prossimo' ? ' style="font-weight:500"' : ''}>${esc(r[1])}</dd>`).join('')}</dl>` : '';
+      body = rows.length ? `<dl class="dl">${rows.map(r => `<dt>${r[0]}</dt><dd${r[0] === 'Prossimo' ? ' style="font-weight:500"' : ''}>${esc(r[1])}</dd>`).join('')}</dl>` : '';
       if (k.avviso) body += `<span class="avviso">Avviso: ${esc(k.avviso)}</span>`;
-      if (k.testo) { const key = 't-' + b.cls + b.first; COPIE[key] = k.testo; body += `<div class="testo"><span class="kicker">Testo da pubblicare</span><span style="font-size:13px;text-wrap:pretty">${esc(k.testo)}</span><button class="btn btn-secondary" style="align-self:flex-start" data-act="copy" data-key="${key}">${S.copied === key ? 'Copiato' : 'Copia testo'}</button></div>`; }
-      if (Array.isArray(k.files) && k.files.length) body += `<div class="row" style="gap:6px">${k.files.map(f => `<span class="tag tag-outline" style="gap:6px"><span class="mono">${esc(f.n)}</span> · ${esc(f.o)}</span>`).join('')}</div>`;
-    } else {
-      const lim = !avail ? 'Argomento e prossimo passo compariranno con il report delle 19:55.' : 'Nessun dato da Classroom o classi.json per la ' + b.cls + '.';
-      body = `<span class="m62" style="font-size:13px">${esc(lim)}</span>`;
-    }
-    return `<article class="art r"><div class="art-h"><span class="art-t">${oreLabel(b)} · ${esc(b.cls)}</span><span class="m65 small">${esc(lab)}</span></div>${body}</article>`;
+      if (k.testo) { const key = 't-' + b.cls + b.first; COPIE[key] = k.testo; body += `<div class="testo"><span class="kicker">Testo da pubblicare</span><span style="font-size:13px;text-wrap:pretty;white-space:pre-wrap">${esc(k.testo)}</span><button class="btn btn-secondary" style="align-self:flex-start" data-act="copy" data-key="${key}">${S.copied === key ? 'Copiato' : 'Copia testo'}</button></div>`; }
+      if (Array.isArray(k.files) && k.files.length) body += `<div class="row" style="gap:6px">${k.files.map(f => { const u = safeUrl(f.url); const inner = `<span class="mono">${esc(f.n)}</span> · ${esc(f.o)}`; return u ? `<a class="tag tag-outline" style="gap:6px;text-decoration:none" href="${u}" target="_blank" rel="noopener">${inner}</a>` : `<span class="tag tag-outline" style="gap:6px">${inner}</span>`; }).join('')}</div>`;
+    } else if (k && k.errore) body = `<span class="m62" style="font-size:13px">Report non generato per la ${esc(b.cls)}: ${esc(k.errore)}</span>`;
+    else body = `<span class="m62" style="font-size:13px">${p ? 'Classe non presente nel report.' : 'Argomento, prossimo passo, testo da pubblicare e file compariranno con il report.'}</span>`;
+    return `<article class="art r"><div class="art-h"><span class="art-t">${oreLabel(b)} · ${esc(b.cls)}</span><span class="m65 small">${esc(b.lab)}</span></div>${body}</article>`;
   });
-  const status = !avail ? 'Dalle 19:55' : !cards.length ? 'Nessuna lezione' : tutte && crOk ? 'COMPLETO · ' + aggTxt : 'Non aggiornato';
-  let inner = head('report', c, esc(titolo), `<span class="tag tag-accent">${status}</span>`);
-  if (!avail) inner += alertBox(`<strong>Non è ancora l'ora.</strong> Il report serale parte alle 19:55 e si ripete ogni ora finché non è completo. Mancano ${durata(Math.max(0, 1195 - mins))}. Sotto: solo classi e laboratori dall'orario.`);
-  if (avail && !crOk) inner += alertBox(`<strong>Classroom non raggiungibile: dati di Classroom non aggiornati.</strong> ${esc(fonte('classroom').errore || '')}`);
+  const status = p ? (p.controllo20 ? (p.nessunaModifica ? 'Verificato alle ' + hm(new Date(p.controllo20)) + ': nessuna modifica' : 'Aggiornato alle ' + hm(new Date(p.controllo20))) : 'COMPLETO · ' + hm(new Date(p.generato))) : rep.inCorso ? 'In preparazione' : 'In attesa';
+  let inner = head('report', c, esc(titolo), `<span class="tag tag-accent">${esc(status)}</span>`);
+  if (!p) inner += alertBox(rep.inCorso ? '<strong>Report in preparazione.</strong> Compare qui entro pochi minuti.'
+    : rep.mancano ? `<strong>Il report si prepara appena tutte le firme di oggi risultano firmate</strong> (ne mancano ${rep.mancano}); al più tardi alle 18:00. Sotto: classi e laboratori dall'orario.`
+    : '<strong>Il report si prepara entro pochi minuti</strong> (oggi senza lezioni: alle 18:00).');
+  else if (!p.controllo20) inner += '<span class="small m62">Alle 20:00 controllo gli stream Classroom delle classi: se ci sono modifiche, il report si aggiorna.</span>';
   inner += cards.length ? `<div class="cards r">${cards.join('')}</div>` : '<p style="margin:0;font-size:14px">Nessuna lezione in programma.</p>';
   return sec('report', c, inner + cmdFooter('report', true));
 }
 
 function secCircolari(x, c) {
   const { d, aggTxt } = x, g = fonte('gmail');
-  const items = Array.isArray(d.circolari) ? d.circolari : [];
+  const items = (Array.isArray(d.circolari) ? d.circolari : []).filter(i => !(i.id && S.nascoste.includes(i.id)));
   const nNew = items.filter(i => i.nuova).length;
   const tagCls = r => (r === 'Informativa' || r === 'Completato') ? 'tag-neutral' : (r === 'Adempimento' || r === 'Da aprire') ? 'tag-outline' : 'tag-accent';
   let inner = head('circolari', c, 'Circolari', `<span class="tag tag-accent">${items.length ? (nNew ? nNew + ' nuove' : 'Nessuna nuova') : '—'}</span>`);
@@ -427,7 +452,7 @@ function secCircolari(x, c) {
   if (!items.length) inner += g.ok ? empty('Nessuna circolare negli ultimi 30 giorni', 'Le notifiche di ClasseViva, SIF2127, FEA, Cineca e Segreteria compariranno qui.') : empty('Nessun dato da Gmail', g.errore || 'Controlla il backend Apps Script.');
   else inner += `<ul class="plain">${items.map(i => {
     const u = safeUrl(i.url), t = esc(i.titolo);
-    return `<li class="li circ"><div class="circ-h">${u ? `<a class="circ-t" href="${u}" target="_blank" rel="noopener">${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</a>` : `<span class="circ-t">${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</span>`}<span class="tag ${tagCls(i.rig)}">${esc(i.rig)}</span></div><span class="circ-n m70">${esc(i.nota)}</span></li>`;
+    return `<li class="li circ"><div class="circ-h">${u ? `<a class="circ-t" href="${u}" target="_blank" rel="noopener">${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</a>` : `<span class="circ-t">${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</span>`}<span class="tag ${tagCls(i.rig)}">${esc(i.rig)}</span></div><span class="circ-n m70">${esc(i.nota)}</span>${i.id && (i.fonte === 'SIF2127' || i.fonte === 'FEA' || i.rig === 'Adempimento') ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="nascondi" data-id="${esc(i.id)}">Già fatto · nascondi</button>` : ''}</li>`;
   }).join('')}</ul>`;
   return sec('circolari', c, inner + cmdFooter('circolari', true, true), 12);
 }
@@ -435,7 +460,7 @@ function secCircolari(x, c) {
 function secScadenze(x, c) {
   const { d, today } = x;
   const t0 = new Date(iso(today) + 'T12:00:00');
-  const list = (Array.isArray(d.scadenze) ? d.scadenze : []).map(s => {
+  const list = (Array.isArray(d.scadenze) ? d.scadenze : []).filter(s => !(s.id && S.nascoste.includes(s.id))).map(s => {
     if (!s.d) return { ...s, n: 99, dd: '—', count: 'senza data', col: 'var(--color-accent-700)', w: 500 };
     const dt = new Date(s.d + 'T12:00:00'); if (isNaN(dt)) return null;
     const n = Math.round((dt - t0) / 864e5);
@@ -446,19 +471,6 @@ function secScadenze(x, c) {
   if (!list.length) inner += (gm.ok || ca.ok) ? empty('Nessuna scadenza in vista', 'Da posta e Calendar non risultano adempimenti nei prossimi giorni.') : empty('Nessun dato da Gmail e Calendar', [gm.errore, ca.errore].filter(Boolean).join(' · '));
   else inner += `<ul class="plain">${list.map(s => `<li class="li sc"><span class="col" style="align-items:flex-start"><span class="sc-dd">${s.dd}</span><span style="font-size:11px;color:${s.col};font-weight:${s.w}">${s.count}</span></span><span class="col" style="gap:2px;min-width:0"><span style="font-weight:500;text-wrap:pretty">${esc(s.t)}</span><span class="small m62">${esc(s.src)}</span></span></li>`).join('')}</ul>`;
   return sec('scadenze', c, inner, 12);
-}
-
-function secSupplenze(x, c) {
-  const { d, nextDay } = x, s = d.supplenze, g = fonte('gmail');
-  let inner = head('supplenze', c, 'Supplenze e variazioni', `<span class="tag tag-neutral">Variazioni per ${G3[nextDay.getDay()]} ${dmy(nextDay)}</span>`);
-  if (!s) inner += g.ok ? empty('Nessuna variazione d\'orario in posta', 'Le notifiche “Variazioni orario” di ClasseViva compariranno qui.') : empty('Nessun dato da Gmail', g.errore || '');
-  else {
-    const titolo = s.titolo || (s.stato === 'nessuna' ? 'Nessuna supplenza a tuo nome.' : '');
-    if (titolo) inner += `<p class="hd" style="margin:0;font-size:20px;line-height:1.2">${esc(titolo)}</p>`;
-    if (s.nota) inner += `<p class="m70" style="margin:0;font-size:13px;text-wrap:pretty">${esc(s.nota)}</p>`;
-    if (Array.isArray(s.ore) && s.ore.length) inner += `<ul class="plain">${s.ore.map(o => `<li class="li sc"><span class="sc-dd" style="font-size:18px">${esc(o.ora)}ª</span><span class="col"><span style="font-weight:500">${esc(o.classe)}${o.aula ? ' · ' + esc(o.aula) : ''}</span><span class="small m62">${esc(o.data)}</span></span></li>`).join('')}</ul>`;
-  }
-  return sec('supplenze', c, inner + cmdFooter('supplenze', false, true), 12);
 }
 
 function secClassi(x, c) {
@@ -544,7 +556,12 @@ function copiaFirma(el) {
     stato: prima.bozza ? (prima.bozza.trim() === testo ? 'confermata' : 'modificata') : 'scritta' };
   delete S.mod[key]; ls.set(K.mod, S.mod);
   if (S.mock) return;
-  S.coda = S.coda.filter(q => !(q.data === req.data && q.ora === req.ora)).concat([req]); ls.set(K.coda, S.coda);
+  accoda({ azione: 'firma', ...req }, q => (q.azione || 'firma') === 'firma' && q.data === req.data && q.ora === req.ora);
+}
+// Coda delle operazioni da inviare al backend (copia firma, firmata, circolare nascosta): sopravvive a offline e riavvii.
+function accoda(op, uguale) {
+  if (S.mock) return;
+  S.coda = S.coda.filter(q => !uguale(q)).concat([op]); ls.set(K.coda, S.coda);
   svuotaCoda();
 }
 async function svuotaCoda() {
@@ -553,7 +570,7 @@ async function svuotaCoda() {
   const ep = ls.get(K.endpoint, ''), tk = ls.get(K.token, ''), resto = [];
   for (const q of S.coda) {
     try {
-      const r = await fetch(ep, { method: 'POST', body: JSON.stringify({ ...q, azione: 'firma', token: tk }), headers: { 'Content-Type': 'text/plain;charset=utf-8' }, credentials: 'omit', redirect: 'follow' });
+      const r = await fetch(ep, { method: 'POST', body: JSON.stringify({ azione: 'firma', ...q, token: tk }), headers: { 'Content-Type': 'text/plain;charset=utf-8' }, credentials: 'omit', redirect: 'follow' });
       const j = await r.json();
       if (j.errore) resto.push(q);
     } catch (e) { resto.push(q); }
@@ -561,6 +578,13 @@ async function svuotaCoda() {
   S.coda = resto; ls.set(K.coda, resto); svuotaCoda._in = false; render();
 }
 // Dopo l'orario di pronto di ogni bozza ricarica i dati a +1, +3, +6 e +10 minuti finché non arriva.
+// Dopo l'ultima firma segnata, ricarica ogni 2 minuti (per 30 minuti) finché il report non è pronto.
+function reportInArrivo() {
+  if (!S.data || !S.ultimaFirmata || Date.now() - S.ultimaFirmata > 30 * 60e3 || Date.now() - S.lastFetch < 2 * 60e3) return false;
+  const now = new Date(), today = new Date(now); today.setHours(12, 0, 0, 0);
+  const r = reportStato(S.data, modello(S.data), today, now.getHours() * 60 + now.getMinutes());
+  return !r.pronto && !r.mancano;
+}
 function bozzaInArrivo() {
   if (!S.data || SIM.ora || SIM.data) return false;
   const now = new Date(), today = new Date(now); today.setHours(12, 0, 0, 0);
@@ -594,7 +618,17 @@ document.addEventListener('click', e => {
   else if (a === 'fase') { S.pin = id === modelloFase() ? null : id; render(); }
   else if (a === 'pickfase') { S.pin = id === el.dataset.auto ? null : id; render(); }
   else if (a === 'unpin') { S.pin = null; render(); }
-  else if (a === 'firma') { const d = { ...S.done }; if (d[el.dataset.key]) delete d[el.dataset.key]; else d[el.dataset.key] = 1; S.done = d; ls.set(K.done, d); render(); }
+  else if (a === 'firma') {
+    const v = Number(el.dataset.val); S.done = { ...S.done, [el.dataset.key]: v }; ls.set(K.done, S.done);
+    if (v) S.ultimaFirmata = Date.now();
+    accoda({ azione: 'firmata', data: el.dataset.data, ora: Number(el.dataset.ora), valore: !!v }, q => q.azione === 'firmata' && q.data === el.dataset.data && q.ora === Number(el.dataset.ora));
+    render();
+  }
+  else if (a === 'nascondi') {
+    const id = el.dataset.id; S.nascoste = [id, ...S.nascoste.filter(z => z !== id)].slice(0, 300); ls.set(K.nascoste, S.nascoste);
+    accoda({ azione: 'nascondi', id }, q => q.azione === 'nascondi' && q.id === id);
+    render();
+  }
   else if (a === 'ut-cycle') setTickets(S.tickets.map(t => String(t.id) === id ? { ...t, stato: STATI[(STATI.indexOf(t.stato) + 1) % 3] } : t));
   else if (a === 'ut-del') setTickets(S.tickets.filter(t => String(t.id) !== id));
   else if (a === 'ut-add') addTicket();
@@ -644,7 +678,7 @@ function modelloFase() { const n = adesso(), m = n.getHours() * 60 + n.getMinute
 /* ---------- ciclo di vita ---------- */
 setInterval(() => {
   if (S.setup || !collegato()) return;
-  if (document.visibilityState === 'visible' && (Date.now() - S.lastFetch > 15 * 60e3 || bozzaInArrivo())) carica(); else render();
+  if (document.visibilityState === 'visible' && (Date.now() - S.lastFetch > 15 * 60e3 || bozzaInArrivo() || reportInArrivo())) carica(); else render();
 }, 30e3);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || S.setup || !collegato()) return;
