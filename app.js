@@ -51,6 +51,8 @@ const dmy = d => pad(d.getDate()) + '/' + pad(d.getMonth() + 1);
 const iso = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
 const hm = d => pad(d.getHours()) + ':' + pad(d.getMinutes());
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); x.setHours(12, 0, 0, 0); return x; };
+const hhmm = m => pad(Math.floor(m / 60)) + ':' + pad(m % 60);
+const PRONTA = 5; // la bozza della firma compare 5 minuti dopo la fine dell'ora (o del blocco di ore consecutive)
 const durata = m => m >= 60 ? Math.floor(m / 60) + ' h ' + pad(m % 60) + ' min' : m + ' min';
 const oreLabel = b => b.first === b.last ? b.first + 'ª ora' : b.first + 'ª–' + b.last + 'ª ora';
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -258,11 +260,9 @@ function renderDashboard() {
     A = { ...A, k: 'Prossima', t: nxt.n + 'ª ora alle ' + nxt.s + ' · ' + nxt.cls + (nxt.lab ? ' · ' + nxt.lab : ''), s: mins < tm(todayL[0].s) ? 'Avviso consigliato: 30 min prima' : 'Intervallo in corso' };
   } else if (!todayL.length) {
     A = { ...A, k: 'Giorno libero', t: 'Nessuna lezione oggi', s: 'Prossime lezioni: ' + ndLabel + ' · ' + ndL.map(l => l.cls).join(', ') };
-  } else if (mins < 840) {
-    A = { ...A, k: 'Lezioni concluse', t: 'Firme del registro disponibili dalle 14:00', s: 'Mancano ' + durata(840 - mins) };
   } else if (mins < 1195) {
     const left = todayB.filter(b => !S.done[iso(today) + '-' + b.first]).length;
-    A = { ...A, k: 'Pomeriggio', t: left ? left + ' firme da apporre sul registro' : 'Tutte le firme di oggi sono apposte', s: 'Report di ' + ndLabel + ' dalle 19:55' };
+    A = { ...A, k: mins < 840 ? 'Lezioni concluse' : 'Pomeriggio', t: left ? left + ' firme da apporre sul registro' : 'Tutte le firme di oggi sono apposte', s: 'Report di ' + ndLabel + ' dalle 19:55' };
   } else {
     A = { ...A, k: 'Sera', t: 'Report lezioni di ' + ndLabel + (crOk ? '' : ': dati Classroom non aggiornati'), s: ndL.map(l => l.n + 'ª ' + l.cls).join(' · ') };
   }
@@ -295,8 +295,8 @@ function renderDashboard() {
 
 function renderTimeline(x) {
   const { mins, todayL, todayB, autoFase, ndLabel, ndL, M, today } = x;
-  const tl = todayL.map(l => { const st = mins >= tm(l.e) ? 'done' : mins >= tm(l.s) ? 'now' : 'next'; return { time: l.s, label: l.n + 'ª ora · ' + l.cls, sub: (l.lab ? l.lab + ' · ' : '') + 'firma alle ' + l.e, st }; });
-  tl.push({ time: '14:00', label: 'Firme registro', sub: !M.has ? 'Orario non disponibile' : todayB.length ? todayB.length + ' firme da preparare' : 'Nessuna lezione oggi', st: mins >= 1195 ? 'done' : mins >= 840 ? 'now' : 'next', pick: 'pomeriggio' });
+  const tl = todayL.map(l => { const st = mins >= tm(l.e) ? 'done' : mins >= tm(l.s) ? 'now' : 'next'; return { time: l.s, label: l.n + 'ª ora · ' + l.cls, sub: (l.lab ? l.lab + ' · ' : '') + 'firma alle ' + l.e + ' · bozza alle ' + hhmm(tm(l.e) + PRONTA), st }; });
+  tl.push({ time: '14:00', label: 'Firme registro', sub: !M.has ? 'Orario non disponibile' : todayB.length ? todayB.filter(b => !S.done[iso(today) + '-' + b.first]).length + ' firme da apporre · bozze 5 min dopo ogni ora' : 'Nessuna lezione oggi', st: mins >= 1195 ? 'done' : mins >= 840 ? 'now' : 'next', pick: 'pomeriggio' });
   tl.push({ time: '19:55', label: 'Report lezioni', sub: 'Per ' + ndLabel, st: mins >= 1195 ? 'now' : 'next', pick: 'sera' });
   const li = tl.map(t => {
     const dot = t.st === 'now' ? 'var(--color-accent)' : t.st === 'done' ? 'color-mix(in srgb,var(--color-accent) 35%,transparent)' : 'transparent';
@@ -342,15 +342,15 @@ function secFirme(x, c) {
   const { M, mins, today, todayB, crOk, d } = x;
   const titolo = 'Firme registro · ' + GG[today.getDay()] + ' ' + dmy(today);
   if (!M.has) return sec('firme', c, head('firme', c, esc(titolo)) + empty('Nessun dato da orario.json', 'Senza orario non so quali ore firmare oggi.') + cmdFooter('firme', true));
-  const avail = mins >= 840;
+  const pronta = b => tm(b.e) + PRONTA;
   const testi = (d.firme && d.firme[iso(today)]) || {};
   let nDone = 0;
   const items = todayB.map(b => {
     const key = iso(today) + '-' + b.first, done = !!S.done[key]; if (done) nDone++;
     const text = testi[String(b.first)] || '';
-    const show = avail && !!text;
+    const avail = mins >= pronta(b), show = avail && !!text;
     if (show) COPIE['f-' + key] = text;
-    const ph = !avail ? 'In attesa: la bozza compare dalle 14:00.' : 'Bozza non ancora generata: usa il comando qui sotto.';
+    const ph = !avail ? 'In attesa: la bozza compare alle ' + hhmm(pronta(b)) + ', 5 minuti dopo la fine dell\'ora.' : 'Bozza non ancora generata: usa il comando qui sotto.';
     return `<article class="art" style="opacity:${done ? 0.55 : 1}">
       <div class="art-h"><span class="art-t">${esc(b.cls)} <small>· ${oreLabel(b)}</small></span><span class="m65" style="font-size:11px">Num ore ${b.num}${crOk ? '' : ' · da verificare'}</span></div>
       ${show ? `<p class="firma">${esc(text)}</p>` : `<p class="empty" style="display:block">${ph}</p>`}
@@ -358,9 +358,10 @@ function secFirme(x, c) {
         <button class="btn btn-ghost" data-act="firma" data-key="${key}">${done ? 'Firmata ✓ (annulla)' : 'Segna come firmata'}</button></div>
     </article>`;
   }).join('');
-  const status = !todayB.length ? 'Nessuna lezione' : !avail ? 'Dalle 14:00' : nDone + ' / ' + todayB.length + ' firmate';
+  const prossima = todayB.find(b => mins < pronta(b));
+  const status = !todayB.length ? 'Nessuna lezione' : !todayB.some(b => mins >= pronta(b)) ? 'Dalle ' + hhmm(pronta(todayB[0])) : nDone + ' / ' + todayB.length + ' firmate';
   let inner = head('firme', c, esc(titolo), `<span class="tag tag-accent">${status}</span>`);
-  if (!avail && todayB.length) inner += alertBox(`<strong>Non è ancora l'ora.</strong> Le firme di oggi si preparano dalle 14:00, dopo l'ultima lezione. Mancano ${durata(Math.max(0, 840 - mins))}.`);
+  if (prossima) inner += alertBox(`<strong>Prossima bozza alle ${hhmm(pronta(prossima))}</strong> (${esc(prossima.cls)} · ${oreLabel(prossima)}): ogni firma compare 5 minuti dopo la fine dell'ora. Mancano ${durata(pronta(prossima) - mins)}.`);
   if (!crOk && todayB.length) inner += alertBox(`<strong>Classroom non raggiungibile.</strong> ${esc(fonte('classroom').errore || '')} Le bozze vanno verificate su Classroom prima di firmare.`);
   if (!todayB.length) inner += '<p style="margin:0;font-size:14px">Nessuna lezione oggi: niente da firmare.</p>';
   inner += `<div class="cards">${items}</div>` + cmdFooter('firme', true);
