@@ -667,7 +667,14 @@ document.addEventListener('visibilitychange', () => {
   });
 })();
 
-if ('serviceWorker' in navigator && !S.mock) navigator.serviceWorker.register('./sw.js').catch(() => {});
+if ('serviceWorker' in navigator && !S.mock) {
+  // Quando una nuova versione del service worker prende il controllo, ricarica una volta per usare i file nuovi.
+  const primoController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (primoController && !sessionStorage.getItem('pd_ricaricata')) { sessionStorage.setItem('pd_ricaricata', '1'); location.reload(); } });
+  navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(reg => {
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch(() => {});
+}
 
 if (!S.mock && collegato()) { const last = ls.json(K.last, null); if (valido(last)) { S.data = last; S.offline = false; } }
 render();
