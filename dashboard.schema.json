@@ -2,45 +2,138 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Snapshot Dashboard Docente",
   "type": "object",
-  "required": ["meta", "circolari", "scadenze"],
+  "required": [
+    "meta",
+    "circolari",
+    "scadenze"
+  ],
   "properties": {
     "meta": {
       "type": "object",
       "properties": {
-        "aggiornato": { "type": "string", "format": "date-time" },
+        "aggiornato": {
+          "type": "string",
+          "format": "date-time"
+        },
         "fonti": {
           "type": "object",
           "description": "Stato per fonte: gmail, classroom, calendar, classeviva",
           "additionalProperties": {
             "type": "object",
-            "properties": { "ok": { "type": "boolean" }, "errore": { "type": ["string", "null"] }, "letti": { "type": "integer" } }
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              },
+              "errore": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "letti": {
+                "type": "integer"
+              }
+            }
           }
         }
       }
     },
     "orario": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "description": "Come le costanti ORE/LAB/ORARIO del prototipo. ORARIO: giorno (0=dom…6=sab) → numero ora → classe",
       "properties": {
-        "ore": { "type": "array", "items": { "type": "object", "properties": { "n": { "type": "integer" }, "s": { "type": "string" }, "e": { "type": "string" } } } },
-        "lab": { "type": "object", "additionalProperties": { "type": "string" } },
-        "settimana": { "type": "object", "additionalProperties": { "type": "object", "additionalProperties": { "type": "string" } } }
+        "ore": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "n": {
+                "type": "integer"
+              },
+              "s": {
+                "type": "string"
+              },
+              "e": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "lab": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "settimana": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "vigore": {
+          "type": "string",
+          "description": "es. 12/10/2026"
+        }
       }
     },
     "circolari": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["titolo", "rig", "nota", "nuova"],
+        "required": [
+          "titolo",
+          "rig",
+          "nota",
+          "nuova"
+        ],
         "properties": {
-          "id": { "type": "string", "description": "id messaggio Gmail" },
-          "data": { "type": "string", "format": "date-time" },
-          "fonte": { "enum": ["ClasseViva", "Segreteria Digitale", "SIF2127", "FEA", "Cineca", "Segreteria", "Altro"] },
-          "titolo": { "type": "string" },
-          "rig": { "enum": ["Ti riguarda", "Adempimento", "Da aprire", "Informativa", "Completato"] },
-          "nota": { "type": "string" },
-          "nuova": { "type": "boolean" },
-          "url": { "type": "string" }
+          "id": {
+            "type": "string",
+            "description": "id messaggio Gmail"
+          },
+          "data": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fonte": {
+            "enum": [
+              "ClasseViva",
+              "Segreteria Digitale",
+              "SIF2127",
+              "FEA",
+              "Cineca",
+              "Segreteria",
+              "Altro"
+            ]
+          },
+          "titolo": {
+            "type": "string"
+          },
+          "rig": {
+            "enum": [
+              "Ti riguarda",
+              "Adempimento",
+              "Da aprire",
+              "Informativa",
+              "Completato"
+            ]
+          },
+          "nota": {
+            "type": "string"
+          },
+          "nuova": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          }
         }
       }
     },
@@ -48,13 +141,67 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["t", "src"],
-        "properties": { "t": { "type": "string" }, "d": { "type": ["string", "null"], "format": "date" }, "src": { "type": "string" } }
+        "required": [
+          "t",
+          "src"
+        ],
+        "properties": {
+          "t": {
+            "type": "string"
+          },
+          "d": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "src": {
+            "type": "string"
+          }
+        }
       }
     },
     "supplenze": {
-      "type": ["object", "null"],
-      "properties": { "stato": { "enum": ["nessuna", "presenti", "da_aprire"] }, "titolo": { "type": "string" }, "nota": { "type": "string" }, "ore": { "type": "array", "items": { "type": "object", "properties": { "data": { "type": "string" }, "ora": { "type": "integer" }, "classe": { "type": "string" }, "aula": { "type": "string" } } } } }
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "stato": {
+          "enum": [
+            "nessuna",
+            "presenti",
+            "da_aprire"
+          ]
+        },
+        "titolo": {
+          "type": "string"
+        },
+        "nota": {
+          "type": "string"
+        },
+        "ore": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "string"
+              },
+              "ora": {
+                "type": "integer"
+              },
+              "classe": {
+                "type": "string"
+              },
+              "aula": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
     },
     "classi": {
       "type": "object",
@@ -62,20 +209,155 @@
       "additionalProperties": {
         "type": "object",
         "properties": {
-          "lang": { "type": "string" }, "co": { "type": "string" }, "arg": { "type": "string" }, "ultimo": { "type": "string" },
-          "aperta": { "type": "string" }, "prossimo": { "type": "string" }, "motivo": { "type": "string" }, "avviso": { "type": "string" },
-          "files": { "type": "array", "items": { "type": "object", "properties": { "n": { "type": "string" }, "o": { "type": "string" } } } }
+          "lang": {
+            "type": "string"
+          },
+          "co": {
+            "type": "string"
+          },
+          "arg": {
+            "type": "string"
+          },
+          "ultimo": {
+            "type": "string"
+          },
+          "aperta": {
+            "type": "string"
+          },
+          "prossimo": {
+            "type": "string"
+          },
+          "motivo": {
+            "type": "string"
+          },
+          "avviso": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "n": {
+                  "type": "string"
+                },
+                "o": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       }
     },
-    "firme": { "type": ["object", "null"], "description": "Data ISO → { numero ora → testo firma }" },
+    "firme": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Data ISO → { prima ora del blocco → testo firma (dalle skill) oppure oggetto generato dal backend }",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "classe": {
+                  "type": "string"
+                },
+                "ore": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "num": {
+                  "type": "integer"
+                },
+                "testo": {
+                  "type": "string"
+                },
+                "bozza": {
+                  "type": "string"
+                },
+                "stato": {
+                  "enum": [
+                    "generata",
+                    "modificata",
+                    "confermata",
+                    "scritta",
+                    "errore"
+                  ]
+                },
+                "errore": {
+                  "type": "string"
+                },
+                "novita": {
+                  "type": "integer"
+                },
+                "generata": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "copiata": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
     "ricondizionamento": {
-      "type": ["object", "null"],
-      "properties": { "modulo": { "type": "string" }, "progetto": { "type": "string" }, "ultima": { "type": "string" }, "nota": { "type": "string" }, "prossimi": { "type": "array", "items": { "type": "string" } } }
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "modulo": {
+          "type": "string"
+        },
+        "progetto": {
+          "type": "string"
+        },
+        "ultima": {
+          "type": "string"
+        },
+        "nota": {
+          "type": "string"
+        },
+        "prossimi": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
     },
     "orientamento": {
       "type": "array",
-      "items": { "type": "object", "properties": { "d": { "type": "string" }, "t": { "type": "string" }, "s": { "type": "string" } } }
+      "items": {
+        "type": "object",
+        "properties": {
+          "d": {
+            "type": "string"
+          },
+          "t": {
+            "type": "string"
+          },
+          "s": {
+            "type": "string"
+          }
+        }
+      }
     }
   }
 }

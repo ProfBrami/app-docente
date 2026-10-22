@@ -9,7 +9,8 @@ Il repo **non contiene dati personali**: l'indirizzo dell'endpoint e il codice d
 | `index.html`, `app.js`, `app.css` | app (render, logica oraria, stati vuoti) |
 | `industry-styles.css` | design system Industry, invariato |
 | `sw.js`, `manifest.webmanifest`, `icons/` | PWA: cache offline, installazione, icone |
-| `apps-script/` | backend Google Apps Script (`Code.gs`, `appsscript.json`) |
+| `apps-script/` | backend Google Apps Script sull'account personale (`Code.gs`, `appsscript.json`): posta, calendario, Drive, firme |
+| `apps-script-scuola/` | script sull'account della scuola (`Classroom.gs`): legge gli stream Classroom e li invia al backend |
 | `dashboard.schema.json` | contratto JSON backend → app |
 | `dev/` | mock locale, escluso da git (vedi `dev/README.md`) |
 
@@ -19,6 +20,7 @@ Il repo **non contiene dati personali**: l'indirizzo dell'endpoint e il codice d
 - ⟳ (o trascinare verso il basso su iPhone/iPad) chiede `&refresh=1`: lo snapshot viene ricostruito, servono 5–15 s.
 - Al ritorno in primo piano ricarica se l'ultimo fetch ha più di 10 minuti.
 - **Mai dati di esempio**: se una fonte non risponde, la sezione mostra "Nessun dato da …".
+- Firme: 5 minuti dopo ogni ora (o blocco di ore consecutive) lo script della scuola invia al backend i contenuti Classroom nuovi; il backend genera la bozza con Claude (`claude-opus-5-5`). Nell'app la bozza è modificabile; "Copia firma" la copia negli appunti e la salva sul backend, nello storico della classe usato per le bozze successive.
 - Restano locali sul dispositivo: firme fatte, segnalazioni Ufficio Tecnico, note, vista, tema.
 
 ## Aggiornare l'app pubblicata

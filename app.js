@@ -38,7 +38,7 @@ const LOCALE = ['localhost','127.0.0.1'].includes(location.hostname);
 const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const MAC = !IOS && /Macintosh/.test(navigator.userAgent);
 const claudeLink = t => `href="${(MAC ? 'claude://claude.ai/new?q=' : 'https://claude.ai/new?q=') + encodeURIComponent(t)}"${MAC ? '' : ' target="_blank" rel="noopener"'}`;
-const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema'};
+const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda'};
 
 const CORNERS = '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
 const ICON_ALERT = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>';
@@ -79,7 +79,7 @@ const S = {
   data: null, loading: false, refreshing: false, error: null, lastFetch: 0, offline: false, cachedAt: null,
   mock: LOCALE && (Q.has('mock') || ls.get(K.endpoint) === 'mock'),
   setup: false, setupErr: '', pin: null, copied: null,
-  done: ls.json(K.done, {}), tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
+  done: ls.json(K.done, {}), mod: ls.json(K.mod, {}), coda: ls.json(K.coda, []), tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
   utLab: LABS[0], utText: '',
   variante: ls.get(K.variante, 'A'), tema: ls.get(K.tema, 'auto')
 };
@@ -108,7 +108,7 @@ async function carica(refresh) {
   try {
     const { j, daCache } = await scarica(urlDati(refresh));
     S.data = j; S.offline = daCache; S.cachedAt = daCache ? (j.meta.aggiornato || null) : null;
-    if (!daCache && !S.mock) ls.set(K.last, j);
+    if (!daCache && !S.mock) { ls.set(K.last, j); svuotaCoda(); }
   } catch (err) {
     S.error = err.auth ? 'Codice di accesso non valido: controlla il collegamento.' : 'Endpoint non raggiungibile (' + (err.message || err) + ').';
     if (!err.auth) {
@@ -347,14 +347,30 @@ function secFirme(x, c) {
   let nDone = 0;
   const items = todayB.map(b => {
     const key = iso(today) + '-' + b.first, done = !!S.done[key]; if (done) nDone++;
-    const text = testi[String(b.first)] || '';
-    const avail = mins >= pronta(b), show = avail && !!text;
-    if (show) COPIE['f-' + key] = text;
-    const ph = !avail ? 'In attesa: la bozza compare alle ' + hhmm(pronta(b)) + ', 5 minuti dopo la fine dell\'ora.' : 'Bozza non ancora generata: usa il comando qui sotto.';
+    const rec = firmaRec(testi[String(b.first)]), avail = mins >= pronta(b);
+    const inCoda = S.coda.find(q => q.data === iso(today) && q.ora === b.first);
+    const valore = S.mod[key] ?? (inCoda ? inCoda.testo : rec.testo) ?? '';
+    const tags = [];
+    if (rec.stato === 'generata') tags.push(['tag-accent', 'Bozza generata' + (rec.generata ? ' alle ' + hm(new Date(rec.generata)) : '')]);
+    if (rec.stato === 'generata' && rec.novita === 0) tags.push(['tag-outline', 'Nessuna novità su Classroom: da verificare']);
+    if (rec.stato === 'modificata') tags.push(['tag-neutral', 'Modificata da te']);
+    if (rec.stato === 'confermata') tags.push(['tag-neutral', 'Bozza confermata']);
+    if (rec.copiata) tags.push(['tag-neutral', 'Copiata alle ' + hm(new Date(rec.copiata))]);
+    if (S.mod[key] !== undefined && S.mod[key] !== rec.testo) tags.push(['tag-outline', 'Modifiche non ancora copiate']);
+    if (inCoda) tags.push(['tag-outline', 'Da sincronizzare']);
+    let body;
+    if (!avail && !valore) body = `<p class="empty" style="display:block">In attesa: la bozza compare alle ${hhmm(pronta(b))}, 5 minuti dopo la fine dell'ora.</p>`;
+    else {
+      const ph = rec.stato === 'errore' ? 'Bozza non generata: ' + rec.errore + '. Puoi scrivere qui la firma.' : 'Bozza in arrivo: si aggiorna da sola. Intanto puoi scrivere qui la firma.';
+      body = (tags.length ? `<div class="row" style="gap:6px">${tags.map(t => `<span class="tag ${t[0]}">${esc(t[1])}</span>`).join('')}</div>` : '')
+        + `<textarea class="input firma-ed" id="fx-${key}" rows="${Math.max(4, Math.ceil(valore.length / 55))}" placeholder="${esc(ph)}" aria-label="Firma ${esc(b.cls)} ${oreLabel(b)}">${esc(valore)}</textarea>`;
+    }
+    const puoCopiare = avail || valore;
     return `<article class="art" style="opacity:${done ? 0.55 : 1}">
-      <div class="art-h"><span class="art-t">${esc(b.cls)} <small>· ${oreLabel(b)}</small></span><span class="m65" style="font-size:11px">Num ore ${b.num}${crOk ? '' : ' · da verificare'}</span></div>
-      ${show ? `<p class="firma">${esc(text)}</p>` : `<p class="empty" style="display:block">${ph}</p>`}
-      <div class="row">${show ? `<button class="btn btn-secondary" data-act="copy" data-key="f-${key}">${S.copied === 'f-' + key ? 'Copiato' : 'Copia testo'}</button>` : ''}
+      <div class="art-h"><span class="art-t">${esc(b.cls)} <small>· ${oreLabel(b)}</small></span><span class="m65" style="font-size:11px">Num ore ${b.num} · Compresenza</span></div>
+      ${body}
+      <div class="row">${puoCopiare ? `<button class="btn btn-primary" data-act="copyfirma" data-key="${key}" data-data="${iso(today)}" data-ora="${b.first}" data-cls="${esc(b.cls)}">${S.copied === 'f-' + key ? 'Copiata ✓' : 'Copia firma'}</button>` : ''}
+        ${rec.bozza && valore !== rec.bozza ? `<button class="btn btn-ghost" data-act="ripristina" data-key="${key}" data-data="${iso(today)}" data-ora="${b.first}">Ripristina bozza</button>` : ''}
         <button class="btn btn-ghost" data-act="firma" data-key="${key}">${done ? 'Firmata ✓ (annulla)' : 'Segna come firmata'}</button></div>
     </article>`;
   }).join('');
@@ -362,7 +378,8 @@ function secFirme(x, c) {
   const status = !todayB.length ? 'Nessuna lezione' : !todayB.some(b => mins >= pronta(b)) ? 'Dalle ' + hhmm(pronta(todayB[0])) : nDone + ' / ' + todayB.length + ' firmate';
   let inner = head('firme', c, esc(titolo), `<span class="tag tag-accent">${status}</span>`);
   if (prossima) inner += alertBox(`<strong>Prossima bozza alle ${hhmm(pronta(prossima))}</strong> (${esc(prossima.cls)} · ${oreLabel(prossima)}): ogni firma compare 5 minuti dopo la fine dell'ora. Mancano ${durata(pronta(prossima) - mins)}.`);
-  if (!crOk && todayB.length) inner += alertBox(`<strong>Classroom non raggiungibile.</strong> ${esc(fonte('classroom').errore || '')} Le bozze vanno verificate su Classroom prima di firmare.`);
+  if (!crOk && todayB.length) inner += alertBox(`<strong>Classroom non raggiungibile.</strong> ${esc(fonte('classroom').errore || '')} Senza Classroom le bozze non vengono generate.`);
+  if (todayB.length) inner += '<span class="small m62">Modifica la bozza con quello che hai fatto in classe, poi premi Copia firma e incollala su Classeviva. La versione copiata resta qui e serve a migliorare le bozze successive.</span>';
   if (!todayB.length) inner += '<p style="margin:0;font-size:14px">Nessuna lezione oggi: niente da firmare.</p>';
   inner += `<div class="cards">${items}</div>` + cmdFooter('firme', true);
   return sec('firme', c, inner);
@@ -514,6 +531,46 @@ function renderFoot() {
   </footer>`;
 }
 
+/* ---------- firme: modifica, copia, invio al backend ---------- */
+// Una firma può arrivare come testo (firme.json delle skill) o come oggetto generato dal backend.
+const firmaRec = v => typeof v === 'string' ? { testo: v } : (v && typeof v === 'object' ? v : {});
+function copiaFirma(el) {
+  const key = el.dataset.key, ta = document.getElementById('fx-' + key), testo = (ta ? ta.value : '').trim();
+  if (!testo) { if (ta) ta.focus(); return; }
+  COPIE['f-' + key] = testo; copia('f-' + key); // la copia negli appunti deve avvenire subito, nel gesto dell'utente
+  const req = { data: el.dataset.data, ora: Number(el.dataset.ora), classe: el.dataset.cls, testo };
+  const giorni = S.data.firme = S.data.firme || {}, g = giorni[req.data] = giorni[req.data] || {}, prima = firmaRec(g[String(req.ora)]);
+  g[String(req.ora)] = { ...prima, classe: req.classe, testo, copiata: new Date().toISOString(),
+    stato: prima.bozza ? (prima.bozza.trim() === testo ? 'confermata' : 'modificata') : 'scritta' };
+  delete S.mod[key]; ls.set(K.mod, S.mod);
+  if (S.mock) return;
+  S.coda = S.coda.filter(q => !(q.data === req.data && q.ora === req.ora)).concat([req]); ls.set(K.coda, S.coda);
+  svuotaCoda();
+}
+async function svuotaCoda() {
+  if (S.mock || !S.coda.length || svuotaCoda._in) return;
+  svuotaCoda._in = true;
+  const ep = ls.get(K.endpoint, ''), tk = ls.get(K.token, ''), resto = [];
+  for (const q of S.coda) {
+    try {
+      const r = await fetch(ep, { method: 'POST', body: JSON.stringify({ ...q, azione: 'firma', token: tk }), headers: { 'Content-Type': 'text/plain;charset=utf-8' }, credentials: 'omit', redirect: 'follow' });
+      const j = await r.json();
+      if (j.errore) resto.push(q);
+    } catch (e) { resto.push(q); }
+  }
+  S.coda = resto; ls.set(K.coda, resto); svuotaCoda._in = false; render();
+}
+// Dopo l'orario di pronto di ogni bozza ricarica i dati a +1, +3, +6 e +10 minuti finché non arriva.
+function bozzaInArrivo() {
+  if (!S.data || SIM.ora || SIM.data) return false;
+  const now = new Date(), today = new Date(now); today.setHours(12, 0, 0, 0);
+  const testi = (S.data.firme && S.data.firme[iso(today)]) || {};
+  return modello(S.data).blocks(today).some(b => !firmaRec(testi[String(b.first)]).testo && [1, 3, 6, 10].some(dm => {
+    const t = new Date(today); t.setHours(0, tm(b.e) + PRONTA + dm, 0, 0);
+    return now >= t && S.lastFetch < t.getTime();
+  }));
+}
+
 /* ---------- azioni ---------- */
 function copia(key) {
   const text = COPIE[key] || (key.startsWith('cmd-') ? CMD[key.slice(4)] : ''); if (!text) return;
@@ -532,6 +589,8 @@ document.addEventListener('click', e => {
   const a = el.dataset.act, id = el.dataset.id;
   if (a === 'copy') copia(el.dataset.key);
   else if (a === 'refresh') carica(true);
+  else if (a === 'copyfirma') copiaFirma(el);
+  else if (a === 'ripristina') { const r = firmaRec(((S.data.firme || {})[el.dataset.data] || {})[el.dataset.ora]); S.mod[el.dataset.key] = r.bozza || ''; ls.set(K.mod, S.mod); render(); }
   else if (a === 'fase') { S.pin = id === modelloFase() ? null : id; render(); }
   else if (a === 'pickfase') { S.pin = id === el.dataset.auto ? null : id; render(); }
   else if (a === 'unpin') { S.pin = null; render(); }
@@ -555,6 +614,7 @@ document.addEventListener('keydown', e => {
 document.addEventListener('input', e => {
   const t = e.target;
   if (t.id === 'note') { S.note = t.value; ls.set(K.note, t.value); }
+  else if (t.id && t.id.startsWith('fx-')) { S.mod[t.id.slice(3)] = t.value; ls.set(K.mod, S.mod); }
   else if (t.id === 'ut-text') S.utText = t.value;
 });
 document.addEventListener('change', e => {
@@ -584,7 +644,7 @@ function modelloFase() { const n = adesso(), m = n.getHours() * 60 + n.getMinute
 /* ---------- ciclo di vita ---------- */
 setInterval(() => {
   if (S.setup || !collegato()) return;
-  if (document.visibilityState === 'visible' && Date.now() - S.lastFetch > 15 * 60e3) carica(); else render();
+  if (document.visibilityState === 'visible' && (Date.now() - S.lastFetch > 15 * 60e3 || bozzaInArrivo())) carica(); else render();
 }, 30e3);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || S.setup || !collegato()) return;
