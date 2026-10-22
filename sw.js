@@ -2,7 +2,7 @@
 // Shell: stale-while-revalidate (si apre offline, gli aggiornamenti arrivano all'apertura successiva).
 // Dati dall'endpoint Apps Script: network-first con fallback all'ultimo JSON valido (header X-Dashboard-Cache: 1).
 // Font Google: cache-first.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL = 'shell-' + VERSION, DATA = 'data-v1', FONTS = 'fonts-v1';
 const FILES = ['./', './index.html', './app.js', './app.css', './industry-styles.css', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];

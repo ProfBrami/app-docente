@@ -30,8 +30,14 @@ const NUM = {orario:'01',firme:'02',report:'03',circolari:'04',scadenze:'05',sup
 const FONTI = [['gmail','Gmail'],['classroom','Classroom'],['calendar','Calendar'],['classeviva','ClasseViva']];
 const STATI = ['Aperta','In corso','Chiusa'];
 const LABS = ['Arrakis','Matrix','Lab. 21','Neo Tokio','Skynet','Altro'];
-const MOCK_URL = './dev/' + (/^[\w-]+$/.test(new URLSearchParams(location.search).get('mock') || '') ? new URLSearchParams(location.search).get('mock') : 'esempio-21-10-2026') + '.json';
+const MOCK_NOME = new URLSearchParams(location.search).get('mock') || '';
+const MOCK_URL = './dev/' + (/^[a-z_][\w-]*$/i.test(MOCK_NOME) ? MOCK_NOME : 'esempio-21-10-2026') + '.json';
 const LOCALE = ['localhost','127.0.0.1'].includes(location.hostname);
+// "Apri in Claude" apre l'app, non il browser: sul Mac lo schema claude:// dell'app desktop,
+// su iPhone/iPad claude.ai/new, che è un link universale dell'app Claude per iOS.
+const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const MAC = !IOS && /Macintosh/.test(navigator.userAgent);
+const claudeLink = t => `href="${(MAC ? 'claude://claude.ai/new?q=' : 'https://claude.ai/new?q=') + encodeURIComponent(t)}"${MAC ? '' : ' target="_blank" rel="noopener"'}`;
 const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema'};
 
 const CORNERS = '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
@@ -132,10 +138,10 @@ const empty = (titolo, sugg) => `<p class="empty"><b>${esc(titolo)}</b>${sugg ? 
 const alertBox = html => `<div class="alert" role="status">${ICON_ALERT}<span>${html}</span></div>`;
 function fonte(nome) { const f = S.data && S.data.meta && S.data.meta.fonti && S.data.meta.fonti[nome]; return f || { ok: false, errore: 'stato sconosciuto', letti: 0 }; }
 function cmdFooter(id, primary, auto) {
-  const t = CMD[id], lab = S.copied === 'cmd-' + id ? 'Copiato' : 'Copia comando', href = 'https://claude.ai/new?q=' + encodeURIComponent(t);
+  const t = CMD[id], lab = S.copied === 'cmd-' + id ? 'Copiato' : 'Copia comando', link = claudeLink(t);
   const btn = primary
-    ? `<button class="btn btn-primary blueprint" data-act="copy" data-key="cmd-${id}">${CORNERS}${lab}</button><a class="btn btn-secondary" href="${href}" target="_blank" rel="noopener">Apri in Claude</a>`
-    : `<button class="btn btn-secondary" data-act="copy" data-key="cmd-${id}">${lab}</button><a class="btn btn-ghost" href="${href}" target="_blank" rel="noopener">Apri in Claude</a>`;
+    ? `<button class="btn btn-primary blueprint" data-act="copy" data-key="cmd-${id}">${CORNERS}${lab}</button><a class="btn btn-secondary" ${link}>Apri in Claude</a>`
+    : `<button class="btn btn-secondary" data-act="copy" data-key="cmd-${id}">${lab}</button><a class="btn btn-ghost" ${link}>Apri in Claude</a>`;
   return `<footer class="cmdf${auto ? ' auto' : ''}"><code class="cmd">${esc(t)}</code><div class="row">${btn}</div></footer>`;
 }
 function head(id, c, titolo, tag) {
