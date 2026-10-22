@@ -386,6 +386,16 @@
           }
         }
       }
+    },
+    "documenti": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "description": "Invii di documenti trascinati nell'app (ultimi 8): stato in_coda | produzione | completato | errore, analisi secondo la skill gestione-circolari-ciusa, documenti prodotti scaricabili con ?file=<file_id>",
+      "items": {
+        "type": "object"
+      }
     }
   }
 }

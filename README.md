@@ -21,6 +21,7 @@ Il repo **non contiene dati personali**: l'indirizzo dell'endpoint e il codice d
 - Al ritorno in primo piano ricarica se l'ultimo fetch ha più di 10 minuti.
 - **Mai dati di esempio**: se una fonte non risponde, la sezione mostra "Nessun dato da …".
 - Firme: 5 minuti dopo ogni ora (o blocco di ore consecutive) lo script della scuola invia al backend i contenuti Classroom nuovi; il backend genera la bozza con Claude (`claude-opus-5-5`). Nell'app la bozza è modificabile; "Copia firma" la copia negli appunti e la salva sul backend, nello storico della classe usato per le bozze successive.
+- Circolari: le notifiche in posta compaiono senza le variazioni d'orario e senza le firme già apposte. I PDF scaricati dalla bacheca (circolari, variazioni, moduli) si trascinano nella sezione Circolari: il backend li analizza con le regole della skill gestione-circolari-ciusa, mette le supplenze nell'orario, le scadenze in Scadenze, offre i promemoria .ics e compila i moduli richiesti (Agent Skills docx/xlsx/pdf), scaricabili dall'app.
 - Restano locali sul dispositivo: firme fatte, segnalazioni Ufficio Tecnico, note, vista, tema.
 
 ## Aggiornare l'app pubblicata

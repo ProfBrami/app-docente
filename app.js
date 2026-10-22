@@ -78,7 +78,7 @@ const S = {
   data: null, loading: false, refreshing: false, error: null, lastFetch: 0, offline: false, cachedAt: null,
   mock: LOCALE && (Q.has('mock') || ls.get(K.endpoint) === 'mock'),
   setup: false, setupErr: '', pin: null, copied: null,
-  done: ls.json(K.done, {}), mod: ls.json(K.mod, {}), coda: ls.json(K.coda, []), nascoste: ls.json(K.nascoste, []), ultimaFirmata: 0, tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
+  done: ls.json(K.done, {}), mod: ls.json(K.mod, {}), coda: ls.json(K.coda, []), nascoste: ls.json(K.nascoste, []), ultimaFirmata: 0, invio: null, invioErr: '', trascina: false, tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
   utLab: LABS[0], utText: '',
   variante: ls.get(K.variante, 'A'), tema: ls.get(K.tema, 'auto')
 };
@@ -444,17 +444,52 @@ function secReport(x, c) {
 
 function secCircolari(x, c) {
   const { d, aggTxt } = x, g = fonte('gmail');
-  const items = (Array.isArray(d.circolari) ? d.circolari : []).filter(i => !(i.id && S.nascoste.includes(i.id)));
+  const jobs = Array.isArray(d.documenti) ? d.documenti : [];
+  const analizzate = new Set(jobs.flatMap(j => ((j.analisi && j.analisi.circolari) || []).map(z => String(z.numero || '').replace(/\D/g, ''))).filter(Boolean));
+  const numero = t => (String(t).match(/circ\.?\s*(\d+)/i) || [])[1];
+  const items = (Array.isArray(d.circolari) ? d.circolari : []).filter(i => !(i.id && S.nascoste.includes(i.id)) && !analizzate.has(numero(i.titolo)));
   const nNew = items.filter(i => i.nuova).length;
-  const tagCls = r => (r === 'Informativa' || r === 'Completato') ? 'tag-neutral' : (r === 'Adempimento' || r === 'Da aprire') ? 'tag-outline' : 'tag-accent';
+  const tagCls = r => (r === 'Informativa' || r === 'Completato' || r === 'Non di competenza') ? 'tag-neutral' : (r === 'Adempimento' || r === 'Da aprire') ? 'tag-outline' : 'tag-accent';
   let inner = head('circolari', c, 'Circolari', `<span class="tag tag-accent">${items.length ? (nNew ? nNew + ' nuove' : 'Nessuna nuova') : '—'}</span>`);
-  inner += `<span class="small m62">Fonte: posta Gmail e notifiche ClasseViva · aggiornato ${esc(aggTxt)}</span>`;
-  if (!items.length) inner += g.ok ? empty('Nessuna circolare negli ultimi 30 giorni', 'Le notifiche di ClasseViva, SIF2127, FEA, Cineca e Segreteria compariranno qui.') : empty('Nessun dato da Gmail', g.errore || 'Controlla il backend Apps Script.');
+  // zona di trascinamento: circolari, variazioni d'orario e moduli scaricati dalla bacheca
+  inner += `<div class="drop${S.trascina ? ' on' : ''}" id="drop">
+    <span><b>Trascina qui circolari, variazioni d'orario e moduli</b> (PDF, Word, Excel, immagini): li analizzo con le regole della skill circolari, le supplenze vanno nell'orario e i moduli richiesti vengono compilati.</span>
+    <div class="row" style="align-items:center"><button class="btn btn-secondary" data-act="scegli">Scegli file</button>
+      <input class="input" id="doc-nota" style="flex:1 1 180px;width:auto" placeholder="Nota per Claude (facoltativa)" aria-label="Nota per Claude"></div>
+    <input type="file" id="doc-file" multiple accept=".pdf,.doc,.docx,.odt,.xls,.xlsx,.ods,.txt,image/*" hidden>
+    ${S.invio ? `<span class="small">${esc(S.invio)}</span>` : ''}${S.invioErr ? `<span class="small" style="color:var(--color-accent-800)">${esc(S.invioErr)}</span>` : ''}
+  </div>`;
+  inner += jobs.map(renderJob).join('');
+  inner += `<span class="small m62">Notifiche in posta (Gmail, ClasseViva) · aggiornato ${esc(aggTxt)}</span>`;
+  if (!items.length) inner += g.ok ? empty('Nessuna notifica da analizzare', 'Le notifiche di ClasseViva, SIF2127, FEA, Cineca e Segreteria compariranno qui.') : empty('Nessun dato da Gmail', g.errore || 'Controlla il backend Apps Script.');
   else inner += `<ul class="plain">${items.map(i => {
     const u = safeUrl(i.url), t = esc(i.titolo);
     return `<li class="li circ"><div class="circ-h">${u ? `<a class="circ-t" href="${u}" target="_blank" rel="noopener">${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</a>` : `<span class="circ-t">${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</span>`}<span class="tag ${tagCls(i.rig)}">${esc(i.rig)}</span></div><span class="circ-n m70">${esc(i.nota)}</span>${i.id && (i.fonte === 'SIF2127' || i.fonte === 'FEA' || i.rig === 'Adempimento') ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="nascondi" data-id="${esc(i.id)}">Già fatto · nascondi</button>` : ''}</li>`;
   }).join('')}</ul>`;
   return sec('circolari', c, inner + cmdFooter('circolari', true, true), 12);
+}
+
+// Un invio di documenti: stato, circolari analizzate, supplenze trovate, documenti prodotti, domande.
+function renderJob(j) {
+  const quando = j.creato ? dmy(new Date(j.creato)) + ' ' + hm(new Date(j.creato)) : '';
+  const stato = { in_coda: 'In analisi…', produzione: 'Compilo i documenti richiesti…', completato: 'Analizzati', errore: 'Errore' }[j.stato] || j.stato;
+  const a = j.analisi || {};
+  let h = `<div class="job"><div class="circ-h"><span class="small m62">Inviati il ${esc(quando)} · ${esc((j.files || []).join(', '))}</span><span class="tag ${j.stato === 'completato' ? 'tag-neutral' : 'tag-outline'}">${esc(stato)}</span></div>`;
+  if (j.errore) h += `<span class="avviso">Errore: ${esc(j.errore)}</span>`;
+  (a.circolari || []).forEach((z, i) => {
+    const tit = (z.numero ? 'Circ. ' + z.numero + ' – ' : '') + z.titolo + (z.data ? ' (' + z.data + ')' : '');
+    h += `<div class="circ li"><div class="circ-h"><span class="circ-t">${esc(tit)}</span><span class="tag ${z.pertinenza === 'Ti riguarda' || z.pertinenza === 'Le tue classi' ? 'tag-accent' : 'tag-neutral'}">${esc(z.pertinenza)}</span></div>`;
+    if (z.obiettivo) h += `<span class="circ-n">${esc(z.obiettivo)}</span>`;
+    if (z.sintesi) h += `<span class="circ-n m70">${esc(z.sintesi)}</span>`;
+    (z.adempimenti || []).forEach(ad => { h += `<span class="circ-n"><b>Adempimento:</b> ${esc(ad.cosa)}${ad.scadenza ? ' · entro ' + esc(dmy(new Date(ad.scadenza + 'T12:00:00'))) : ''}${ad.documenti ? ' · ' + esc(ad.documenti) : ''}${ad.riferimenti ? ' · ' + esc(ad.riferimenti) : ''}</span>`; });
+    (z.promemoria || []).forEach((pm, k) => { h += `<div class="row" style="align-items:center;gap:8px"><span class="circ-n"><b>Promemoria:</b> ${esc(pm.titolo)} · ${esc(pm.data ? dmy(new Date(pm.data + 'T12:00:00')) : '')}${pm.inizio ? ' ' + esc(pm.inizio) + (pm.fine ? '–' + esc(pm.fine) : '') : ''}${pm.luogo ? ' · ' + esc(pm.luogo) : ''}</span><button class="btn btn-ghost" data-act="ics" data-job="${esc(j.id)}" data-c="${i}" data-p="${k}">Aggiungi al calendario</button></div>`; });
+    h += '</div>';
+  });
+  if (a.variazioni_esaminate) h += `<span class="circ-n">${(a.supplenze || []).length ? '<b>Supplenze a tuo carico:</b> ' + a.supplenze.map(s2 => esc(s2.classe + ' ' + s2.ora + 'ª ora ' + dmy(new Date(s2.data + 'T12:00:00')) + (s2.aula ? ' · ' + s2.aula : ''))).join('; ') + ' (inserite nell\'orario)' : 'Variazioni d\'orario esaminate: nessuna supplenza a tuo nome.'}</span>`;
+  (a.domande || []).forEach(q => { h += `<span class="avviso">Domanda: ${esc(q)} (rispondi nella nota del prossimo invio)</span>`; });
+  if ((j.documenti || []).length) h += `<div class="row" style="gap:6px">${j.documenti.map(dc => `<button class="btn btn-primary" data-act="scarica" data-file="${esc(dc.file_id)}">${S.copied === 'dl-' + dc.file_id ? 'Scaricato ✓' : 'Scarica ' + esc(dc.nome)}</button>`).join('')}</div>`;
+  if (j.noteProduzione) h += `<span class="circ-n m70" style="white-space:pre-wrap">${esc(j.noteProduzione)}</span>`;
+  return h + '</div>';
 }
 
 function secScadenze(x, c) {
@@ -595,6 +630,80 @@ function bozzaInArrivo() {
   }));
 }
 
+/* ---------- documenti trascinati: invio, calendario, download ---------- */
+const DOC_MAX_MB = 20;
+async function inviaDocumenti(files) {
+  if (!files.length) return;
+  if (S.mock) { S.invioErr = 'Nel mock di sviluppo l\'invio dei documenti non è disponibile.'; render(); return; }
+  const tot = files.reduce((n, f) => n + f.size, 0);
+  if (tot > DOC_MAX_MB * 1048576) { S.invioErr = 'File troppo grandi: massimo ' + DOC_MAX_MB + ' MB per invio.'; render(); return; }
+  const notaEl = document.getElementById('doc-nota'), nota = notaEl ? notaEl.value.trim() : '';
+  S.invio = 'Invio di ' + files.length + ' file…'; S.invioErr = ''; render();
+  try {
+    const dati = await Promise.all(files.map(f => new Promise((ok, ko) => {
+      const r = new FileReader(); r.onload = () => ok({ nome: f.name, tipo: f.type || '', dati: String(r.result).split(',')[1] || '' }); r.onerror = () => ko(r.error); r.readAsDataURL(f);
+    })));
+    const res = await fetch(ls.get(K.endpoint, ''), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, credentials: 'omit', redirect: 'follow',
+      body: JSON.stringify({ azione: 'documenti', token: ls.get(K.token, ''), nota, files: dati }) });
+    const j = await res.json();
+    if (j.errore) throw new Error(j.errore);
+    S.invio = null; S.attesaDocumenti = Date.now();
+    await carica();
+  } catch (e) { S.invio = null; S.invioErr = 'Invio non riuscito: ' + (e.message || e); render(); }
+}
+function salvaFile(nome, blob) {
+  const u = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = u; a.download = nome; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 30000);
+}
+async function scaricaDocumento(id) {
+  try {
+    const r = await fetch(ls.get(K.endpoint, '') + '?token=' + encodeURIComponent(ls.get(K.token, '')) + '&file=' + encodeURIComponent(id), { credentials: 'omit', redirect: 'follow' });
+    const j = await r.json(); if (j.errore) throw new Error(j.errore);
+    const bin = atob(j.dati), buf = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    salvaFile(j.nome, new Blob([buf], { type: j.mime }));
+    S.copied = 'dl-' + id; render();
+  } catch (e) { S.invioErr = 'Download non riuscito: ' + (e.message || e); render(); }
+}
+// Evento .ics con gli avvisi della skill: la sera prima alle 20:00 e un'ora prima (orari flottanti, CRLF).
+function scaricaIcs(jobId, ci, pi) {
+  const j = (S.data.documenti || []).find(x => x.id === jobId), pm = j && j.analisi.circolari[ci].promemoria[pi]; if (!pm) return;
+  const d8 = s2 => s2.replace(/-/g, ''), t6 = s2 => s2.replace(':', '') + '00';
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const escI = s2 => String(s2 || '').replace(/[\\;,]/g, m => '\\' + m).replace(/\n/g, '\\n');
+  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Dashboard Docente//IT', 'BEGIN:VEVENT', 'UID:' + jobId + '-' + ci + '-' + pi + '@dashboard-docente', 'DTSTAMP:' + stamp, 'SUMMARY:' + escI(pm.titolo)];
+  const alarm = (trig, testo) => L.push('BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + escI(testo), 'TRIGGER:' + trig, 'END:VALARM');
+  if (pm.inizio) {
+    L.push('DTSTART:' + d8(pm.data) + 'T' + t6(pm.inizio), 'DTEND:' + d8(pm.data_fine || pm.data) + 'T' + t6(pm.fine || pm.inizio));
+    const [h, m] = pm.inizio.split(':').map(Number), tot = h * 60 + m + 240;
+    if (pm.luogo) L.push('LOCATION:' + escI(pm.luogo)); if (pm.descrizione) L.push('DESCRIPTION:' + escI(pm.descrizione));
+    alarm('-PT' + Math.floor(tot / 60) + 'H' + (tot % 60 ? (tot % 60) + 'M' : ''), 'Domani ' + pm.inizio + ': ' + pm.titolo);
+    alarm('-PT1H', pm.inizio + ': ' + pm.titolo);
+  } else {
+    const fine = new Date((pm.data_fine || pm.data) + 'T12:00:00'); fine.setDate(fine.getDate() + 1);
+    L.push('DTSTART;VALUE=DATE:' + d8(pm.data), 'DTEND;VALUE=DATE:' + iso(fine).replace(/-/g, ''));
+    if (pm.luogo) L.push('LOCATION:' + escI(pm.luogo)); if (pm.descrizione) L.push('DESCRIPTION:' + escI(pm.descrizione));
+    alarm('-PT4H', 'Domani: ' + pm.titolo);
+  }
+  L.push('END:VEVENT', 'END:VCALENDAR');
+  salvaFile((pm.titolo || 'evento').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_').slice(0, 40) + '.ics', new Blob([L.join('\r\n') + '\r\n'], { type: 'text/calendar' }));
+}
+// Trascinamento di file ovunque nella pagina.
+['dragenter', 'dragover'].forEach(ev => addEventListener(ev, e => {
+  if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files') || !S.data) return;
+  e.preventDefault(); if (!S.trascina) { S.trascina = true; const z = document.getElementById('drop'); if (z) { z.classList.add('on'); z.scrollIntoView({ block: 'center', behavior: 'smooth' }); } }
+}));
+addEventListener('dragleave', e => { if (e.relatedTarget === null) { S.trascina = false; const z = document.getElementById('drop'); if (z) z.classList.remove('on'); } });
+addEventListener('drop', e => {
+  if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+  e.preventDefault(); S.trascina = false; inviaDocumenti([...e.dataTransfer.files]);
+});
+// Mentre un invio è in analisi o in compilazione, ricarica ogni 30 secondi (per 20 minuti).
+function documentiInCorso() {
+  const j = S.data && Array.isArray(S.data.documenti) ? S.data.documenti : [];
+  return j.some(x => x.stato === 'in_coda' || x.stato === 'produzione') && Date.now() - S.lastFetch > 30e3 && Date.now() - (S.attesaDocumenti || 0) < 20 * 60e3;
+}
+
 /* ---------- azioni ---------- */
 function copia(key) {
   const text = COPIE[key] || (key.startsWith('cmd-') ? CMD[key.slice(4)] : ''); if (!text) return;
@@ -614,6 +723,9 @@ document.addEventListener('click', e => {
   if (a === 'copy') copia(el.dataset.key);
   else if (a === 'refresh') carica(true);
   else if (a === 'copyfirma') copiaFirma(el);
+  else if (a === 'scegli') { const f = document.getElementById('doc-file'); if (f) f.click(); }
+  else if (a === 'ics') scaricaIcs(el.dataset.job, Number(el.dataset.c), Number(el.dataset.p));
+  else if (a === 'scarica') scaricaDocumento(el.dataset.file);
   else if (a === 'ripristina') { const r = firmaRec(((S.data.firme || {})[el.dataset.data] || {})[el.dataset.ora]); S.mod[el.dataset.key] = r.bozza || ''; ls.set(K.mod, S.mod); render(); }
   else if (a === 'fase') { S.pin = id === modelloFase() ? null : id; render(); }
   else if (a === 'pickfase') { S.pin = id === el.dataset.auto ? null : id; render(); }
@@ -654,6 +766,7 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'ut-lab') S.utLab = t.value;
+  else if (t.id === 'doc-file') { inviaDocumenti([...t.files]); t.value = ''; }
   else if (t.dataset && t.dataset.set === 'variante') { S.variante = t.value; ls.set(K.variante, t.value); render(); }
   else if (t.dataset && t.dataset.set === 'tema') { S.tema = t.value; ls.set(K.tema, t.value); render(); }
 });
@@ -678,7 +791,7 @@ function modelloFase() { const n = adesso(), m = n.getHours() * 60 + n.getMinute
 /* ---------- ciclo di vita ---------- */
 setInterval(() => {
   if (S.setup || !collegato()) return;
-  if (document.visibilityState === 'visible' && (Date.now() - S.lastFetch > 15 * 60e3 || bozzaInArrivo() || reportInArrivo())) carica(); else render();
+  if (document.visibilityState === 'visible' && (Date.now() - S.lastFetch > 15 * 60e3 || bozzaInArrivo() || reportInArrivo() || documentiInCorso())) carica(); else render();
 }, 30e3);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || S.setup || !collegato()) return;
