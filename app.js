@@ -36,6 +36,9 @@ const LOCALE = ['localhost','127.0.0.1'].includes(location.hostname);
 // su iPhone/iPad claude.ai/new, che è un link universale dell'app Claude per iOS.
 const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const MAC = !IOS && /Macintosh/.test(navigator.userAgent);
+// Le circolari di ClasseViva e Segreteria Digitale si aprono nella bacheca di ClasseViva, non nella mail di notifica.
+const CLASSEVIVA_BACHECA = 'https://web.spaggiari.eu/sif/app/default/bacheca_personale.php';
+const linkCircolare = i => (i.fonte === 'ClasseViva' || i.fonte === 'Segreteria Digitale') ? CLASSEVIVA_BACHECA : i.url;
 const claudeLink = t => `href="${(MAC ? 'claude://claude.ai/new?q=' : 'https://claude.ai/new?q=') + encodeURIComponent(t)}"${MAC ? '' : ' target="_blank" rel="noopener"'}`;
 const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda',nascoste:'pd_circ_nascoste'};
 
@@ -518,7 +521,7 @@ function secCircolari(x, c) {
   inner += `<span class="small m62">Notifiche in posta (Gmail, ClasseViva) · aggiornato ${esc(aggTxt)}</span>`;
   if (!items.length) inner += g.ok ? empty('Nessuna notifica da analizzare', 'Le notifiche di ClasseViva, SIF2127, FEA, Cineca e Segreteria compariranno qui.') : empty('Nessun dato da Gmail', g.errore || 'Controlla il backend Apps Script.');
   else inner += `<ul class="plain">${items.map(i => {
-    const u = safeUrl(i.url), t = esc(i.titolo);
+    const u = safeUrl(linkCircolare(i)), t = esc(i.titolo);
     return `<li class="li circ"><div class="circ-h">${u ? `<a class="circ-t" href="${u}" target="_blank" rel="noopener">${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</a>` : `<span class="circ-t">${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</span>`}<span class="tag ${tagCls(i.rig)}">${esc(i.rig)}</span></div><span class="circ-n m70">${esc(i.nota)}</span>${i.id && (i.fonte === 'SIF2127' || i.fonte === 'FEA' || i.rig === 'Adempimento') ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="nascondi" data-id="${esc(i.id)}">Già fatto · nascondi</button>` : ''}</li>`;
   }).join('')}</ul>`;
   return sec('circolari', c, inner + cmdFooter('circolari', true, true), 12);
