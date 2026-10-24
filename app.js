@@ -158,6 +158,7 @@ let COPIE = {};
 
 /* ---------- render ---------- */
 function render() {
+  if (S.trascinoFile) return; // durante il trascinamento di un file del report la scheda di origine deve restare nel DOM
   const root = document.getElementById('app');
   document.documentElement.dataset.theme = S.tema;
   const act = document.activeElement, focusId = act && act.id, sel = act && 'selectionStart' in act ? [act.selectionStart, act.selectionEnd] : null, top = act ? act.scrollTop : 0;
@@ -234,7 +235,7 @@ function renderTop(now) {
 }
 
 function renderDashboard() {
-  COPIE = {};
+  COPIE = {}; FILE_REP = {};
   const d = S.data, now = adesso(), M = modello(d);
   const mins = now.getHours() * 60 + now.getMinutes();
   const today = new Date(now); today.setHours(12, 0, 0, 0);
@@ -414,33 +415,87 @@ function reportStato(d, M, today, mins) {
   return { target, label: GG[target.getDay()] + ' ' + dmy(target), pronto, inCorso, mancano, breve };
 }
 
+// Impaginazione come l'artefatto "Report lezioni": barra di stato, premessa, una scheda per classe
+// (argomento, ultima cosa, prossimo passo, avviso, testo da pubblicare) e i file trascinabili.
 function secReport(x, c) {
-  const { M, d, rep } = x;
-  const titolo = 'Report lezioni · ' + rep.label;
+  const { M, rep, today } = x;
+  const tg = rep.target, dataLunga = GG[tg.getDay()] + ' ' + tg.getDate() + ' ' + MESI[tg.getMonth()] + ' ' + tg.getFullYear();
+  const titolo = 'Report lezioni · ' + dataLunga;
   if (!M.has) return sec('report', c, head('report', c, esc(titolo)) + empty('Nessun dato da orario.json', 'Il report parte dalle classi e dai laboratori dell\'orario.') + cmdFooter('report', true));
-  const p = rep.pronto;
-  const cards = M.blocks(rep.target).map(b => {
-    const k = p && p.classi && p.classi[b.cls];
-    let body;
-    if (k && !k.errore) {
-      const rows = [['Argomento', [k.lang, k.arg].filter(Boolean).join(' · ')], ['Ultimo', k.ultimo], ['Prossimo', k.prossimo], ['Perché', k.motivo]].filter(r => r[1]);
-      body = rows.length ? `<dl class="dl">${rows.map(r => `<dt>${r[0]}</dt><dd${r[0] === 'Prossimo' ? ' style="font-weight:500"' : ''}>${esc(r[1])}</dd>`).join('')}</dl>` : '';
-      if (k.avviso) body += `<span class="avviso">Avviso: ${esc(k.avviso)}</span>`;
-      if (k.testo) { const key = 't-' + b.cls + b.first; COPIE[key] = k.testo; body += `<div class="testo"><span class="kicker">Testo da pubblicare</span><span style="font-size:13px;text-wrap:pretty;white-space:pre-wrap">${esc(k.testo)}</span><button class="btn btn-secondary" style="align-self:flex-start" data-act="copy" data-key="${key}">${S.copied === key ? 'Copiato' : 'Copia testo'}</button></div>`; }
-      if (Array.isArray(k.files) && k.files.length) body += `<div class="row" style="gap:6px">${k.files.map(f => { const u = safeUrl(f.url); const inner = `<span class="mono">${esc(f.n)}</span> · ${esc(f.o)}`; return u ? `<a class="tag tag-outline" style="gap:6px;text-decoration:none" href="${u}" target="_blank" rel="noopener">${inner}</a>` : `<span class="tag tag-outline" style="gap:6px">${inner}</span>`; }).join('')}</div>`;
-    } else if (k && k.errore) body = `<span class="m62" style="font-size:13px">Report non generato per la ${esc(b.cls)}: ${esc(k.errore)}</span>`;
-    else body = `<span class="m62" style="font-size:13px">${p ? 'Classe non presente nel report.' : 'Argomento, prossimo passo, testo da pubblicare e file compariranno con il report.'}</span>`;
-    return `<article class="art r"><div class="art-h"><span class="art-t">${oreLabel(b)} · ${esc(b.cls)}</span><span class="m65 small">${esc(b.lab)}</span></div>${body}</article>`;
-  });
-  const status = p ? (p.controllo20 ? (p.nessunaModifica ? 'Verificato alle ' + hm(new Date(p.controllo20)) + ': nessuna modifica' : 'Aggiornato alle ' + hm(new Date(p.controllo20))) : 'COMPLETO · ' + hm(new Date(p.generato))) : rep.inCorso ? 'In preparazione' : 'In attesa';
-  let inner = head('report', c, esc(titolo), `<span class="tag tag-accent">${esc(status)}</span>`);
+  const p = rep.pronto, blocchi = M.blocks(tg), ore = M.lessons(tg);
+  const gen = p && new Date(p.generato), quando = d0 => GG[d0.getDay()] + ' ' + dmy(d0) + '/' + d0.getFullYear() + ' ore ' + hm(d0);
+  const stato = p ? [p.controllo20 ? (p.nessunaModifica ? 'VERIFICATO alle ' + hm(new Date(p.controllo20)) + ': nessuna modifica' : 'AGGIORNATO alle ' + hm(new Date(p.controllo20))) : 'COMPLETO',
+      'Giorno-obiettivo: ' + dataLunga, 'generato ' + quando(gen), 'dati di Classroom aggiornati ' + (iso(gen) === iso(today) ? 'ad oggi' : 'al ' + dmy(gen)) + ' (sola lettura)'].join(' · ')
+    : (rep.inCorso ? 'IN PREPARAZIONE' : 'IN ATTESA') + ' · Giorno-obiettivo: ' + dataLunga;
+  let inner = head('report', c, esc(titolo));
+  inner += `<div class="rep-st${p ? ' ok' : ''}" role="status">${esc(stato)}</div>`;
   if (!p) inner += alertBox(rep.inCorso ? '<strong>Report in preparazione.</strong> Compare qui entro pochi minuti.'
     : rep.mancano ? `<strong>Il report si prepara appena tutte le firme di oggi risultano firmate</strong> (ne mancano ${rep.mancano}); al più tardi alle 18:00. Sotto: classi e laboratori dall'orario.`
     : '<strong>Il report si prepara entro pochi minuti</strong> (oggi senza lezioni: alle 18:00).');
-  else if (!p.controllo20) inner += '<span class="small m62">Alle 20:00 controllo gli stream Classroom delle classi: se ci sono modifiche, il report si aggiorna.</span>';
-  inner += cards.length ? `<div class="cards r">${cards.join('')}</div>` : '<p style="margin:0;font-size:14px">Nessuna lezione in programma.</p>';
+  // premessa: orario, campanelle e ore libere del giorno, poi come usare i file
+  const libere = M.ore.filter(h => !ore.some(l => l.n === h.n)).map(h => h.n + 'ª');
+  const premessa = [`Ore e laboratori dall'orario${M.vigore ? ' (dal ' + M.vigore + ')' : ''}; campanelle ${M.ore.map(h => h.n + 'ª ' + h.s.replace(/^0/, '')).join(' · ')}.`,
+    `Il ${GG[tg.getDay()]} hai ${ore.length} ${ore.length === 1 ? 'ora' : 'ore'}${libere.length && ore.length ? (libere.length === 1 ? '; la ' + libere[0] + ' è libera' : '; libere: ' + libere.join(', ')) : ''}.`,
+    p ? 'Solo contenuti pubblicati da te su Classroom. Trascina i file nella cartella o nel post di Classroom, oppure usa Scarica / Copia.' : ''].filter(Boolean).join(' ');
+  inner += `<p class="rep-pre m70">${esc(premessa)}</p>`;
+  if (p && !p.controllo20) inner += '<span class="small m62">Alle 20:00 controllo gli stream Classroom delle classi: se ci sono modifiche, il report si aggiorna.</span>';
+  const con = (x.d.orario && x.d.orario.compresenza) || {};
+  const cards = blocchi.map(b => {
+    const k = p && p.classi && p.classi[b.cls], compr = (k && k.con) || con[b.cls];
+    const quando = `${oreLabel(b)} (${b.s.replace(/^0/, '')}–${b.e.replace(/^0/, '')})${b.lab ? ' · ' + b.lab : ''}${compr ? ' · con ' + compr : ''}`;
+    let body;
+    if (k && !k.errore) {
+      const rows = [['Argomento', [k.lang, k.arg].filter(Boolean).join(' – ')], ['Ultima cosa', k.ultimo], ['Prossimo passo', k.prossimo], ['Perché', k.motivo]].filter(r => r[1]);
+      body = rows.length ? `<dl class="rep-dl">${rows.map(r => `<dt>${r[0]}</dt><dd>${esc(r[1])}</dd>`).join('')}</dl>` : '';
+      if (k.avviso) body += `<div class="rep-warn">${/^avvis/i.test(k.avviso) ? '' : 'Avviso: '}${esc(k.avviso)}</div>`;
+      if (k.testo) { const key = 't-' + b.cls + b.first; COPIE[key] = k.testo; body += `<h4 class="rep-h">Testo da pubblicare (solo la comanda)</h4><div class="rep-txt">${esc(k.testo)}</div><div class="row"><button class="btn btn-secondary" data-act="copy" data-key="${key}">${S.copied === key ? 'Copiato ✓' : 'Copia testo'}</button></div>`; }
+      if (Array.isArray(k.files)) body += k.files.map((f, i) => repFile(f, b.cls + '-' + b.first + '-' + i)).join('');
+    } else if (k && k.errore) body = `<span class="m62" style="font-size:13px">Report non generato per la ${esc(b.cls)}: ${esc(k.errore)}</span>`;
+    else body = `<span class="m62" style="font-size:13px">${p ? 'Classe non presente nel report.' : 'Argomento, prossimo passo, testo da pubblicare e file compariranno con il report.'}</span>`;
+    return `<article class="rep-card"><div class="rep-when"><span class="rep-cls">${esc(b.cls)}</span><span>${esc(quando)}</span></div>${body}</article>`;
+  });
+  inner += cards.length ? `<div class="rep-list">${cards.join('')}</div>` : '<p style="margin:0;font-size:14px">Nessuna lezione in programma.</p>';
+  if (p && p.fonti) inner += `<p class="small m62" style="margin:0">Fonti: ${esc(p.fonti)}</p>`;
   return sec('report', c, inner + cmdFooter('report', true));
 }
+
+/* file del report: anteprima, Copia / Scarica e trascinamento (verso Finder, Drive o il post di Classroom) */
+let FILE_REP = {};
+const nomeFile = n => String(n || 'file').replace(/[\\/:*?"<>|]+/g, '_');
+const mimeDi = (n, m) => /^(text\/plain|image\/(svg\+xml|png|jpeg|gif))$/.test(m || '') ? m : (/\.svg$/i.test(n) ? 'image/svg+xml' : /\.(png|jpe?g|gif)$/i.test(n) ? 'image/' + n.split('.').pop().toLowerCase().replace('jpg', 'jpeg') : 'text/plain');
+const b64utf8 = t => { const by = new TextEncoder().encode(t); let s = ''; for (let i = 0; i < by.length; i += 0x8000) s += String.fromCharCode.apply(null, by.subarray(i, i + 0x8000)); return btoa(s); };
+function repFile(f, key) {
+  if (!f || !f.n) return '';
+  const nome = nomeFile(f.n), mime = mimeDi(nome, f.mime), u = safeUrl(f.url);
+  const testo = typeof f.contenuto === 'string' && f.contenuto ? f.contenuto : '';
+  const b64 = f.b64 && /^[A-Za-z0-9+/=]+$/.test(f.b64) ? f.b64 : testo ? b64utf8(testo) : '';
+  const img = /^image\//.test(mime) && b64;
+  const presente = /presente/i.test(f.o || ''), daFare = !b64 && !u;
+  if (b64 || u) FILE_REP[key] = { nome, mime, b64, url: u ? f.url : '' };
+  const tag = `<span class="tag ${presente ? 'rep-tg' : daFare ? 'tag-outline' : 'rep-tp'}">${esc(f.o || (b64 ? 'prodotta da Claude' : ''))}</span>`;
+  let h = `<div class="rep-file${daFare ? ' off' : ''}"${daFare ? '' : ` draggable="true" data-file="${esc(key)}" title="Trascina il file nella cartella o nel post di Classroom"`}>`
+    + `<div class="rep-fh"><b class="mono">${daFare ? '' : '⠿ '}${esc(nome)}</b>${tag}</div>`;
+  if (f.desc) h += `<div class="small m62">${esc(f.desc)}</div>`;
+  if (img) h += `<img class="rep-img" src="data:${esc(mime)};base64,${b64}" alt="${esc(nome)}" draggable="false">`;
+  else if (testo) { COPIE['fc-' + key] = testo; h += `<pre class="rep-code">${esc(testo)}</pre>`; }
+  const btn = [];
+  if (testo && !img) btn.push(`<button class="btn btn-secondary" data-act="copy" data-key="fc-${esc(key)}">${S.copied === 'fc-' + key ? 'Copiato ✓' : 'Copia codice'}</button>`);
+  if (b64) btn.push(`<button class="btn btn-ghost" data-act="scaricafile" data-file="${esc(key)}">Scarica</button>`);
+  if (u) btn.push(`<a class="btn btn-ghost" href="${u}" target="_blank" rel="noopener">Apri</a>`);
+  if (daFare) btn.push('<span class="small m62">Da preparare: il file non è ancora disponibile.</span>');
+  return h + (btn.length ? `<div class="row">${btn.join('')}</div>` : '') + '</div>';
+}
+const blobFile = r => { const s = atob(r.b64), a = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return new Blob([a], { type: r.mime }); };
+// Trascinando una scheda: Chrome salva il file dove lo si rilascia (DownloadURL); altrove arriva il link o il nome.
+document.addEventListener('dragstart', e => {
+  const el = e.target.closest && e.target.closest('.rep-file[data-file]'), r = el && FILE_REP[el.dataset.file]; if (!r) return;
+  S.trascinoFile = true;
+  e.dataTransfer.effectAllowed = 'copy';
+  if (r.b64) e.dataTransfer.setData('DownloadURL', r.mime + ':' + r.nome + ':data:' + r.mime + ';base64,' + r.b64);
+  if (r.url) e.dataTransfer.setData('text/uri-list', r.url);
+  e.dataTransfer.setData('text/plain', r.url || r.nome);
+});
+document.addEventListener('dragend', () => { if (S.trascinoFile) { S.trascinoFile = false; render(); } });
 
 function secCircolari(x, c) {
   const { d, aggTxt } = x, g = fonte('gmail');
@@ -726,6 +781,7 @@ document.addEventListener('click', e => {
   else if (a === 'scegli') { const f = document.getElementById('doc-file'); if (f) f.click(); }
   else if (a === 'ics') scaricaIcs(el.dataset.job, Number(el.dataset.c), Number(el.dataset.p));
   else if (a === 'scarica') scaricaDocumento(el.dataset.file);
+  else if (a === 'scaricafile') { const r = FILE_REP[el.dataset.file]; if (r) salvaFile(r.nome, blobFile(r)); }
   else if (a === 'ripristina') { const r = firmaRec(((S.data.firme || {})[el.dataset.data] || {})[el.dataset.ora]); S.mod[el.dataset.key] = r.bozza || ''; ls.set(K.mod, S.mod); render(); }
   else if (a === 'fase') { S.pin = id === modelloFase() ? null : id; render(); }
   else if (a === 'pickfase') { S.pin = id === el.dataset.auto ? null : id; render(); }

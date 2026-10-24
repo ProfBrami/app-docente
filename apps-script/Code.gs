@@ -365,7 +365,7 @@ function elaboraReport() {
   (b.classi || []).forEach(k => {
     try { classi[k.classe] = generaReportClasse_(b.data, k); }
     catch (err) { classi[k.classe] = { errore: String(err.message || err).slice(0, 200) }; }
-    P_().setProperty('RC_' + b.data + '_' + k.classe, JSON.stringify(classi[k.classe]).slice(0, 8900));
+    salvaReportClasse_(b.data, k.classe, classi[k.classe]);
   });
   const ora = new Date().toISOString();
   P_().setProperty('R_' + b.data, JSON.stringify({ data: b.data, generato: ora, tipo: b.tipo || 'nuovo', hash: b.hash || '', controllo20: b.tipo === 'aggiornamento' ? ora : null, classi: Object.keys(classi) }));
@@ -384,13 +384,35 @@ function reportSnap_() { // il report più recente con data da oggi in poi
   const inCorso = (CacheService.getScriptCache().get('RP') || '').split('|')[0];
   if (!date.length) return inCorso ? { data: inCorso, inCorso: true, classi: {} } : null;
   const r = JSON.parse(P_().getProperty('R_' + date[date.length - 1])), out = Object.assign({}, r, { classi: {} });
-  r.classi.forEach(k => { out.classi[k] = JSON.parse(P_().getProperty('RC_' + r.data + '_' + k) || '{}'); });
+  r.classi.forEach(k => { out.classi[k] = leggiReportClasse_(r.data, k); });
   if (inCorso && inCorso >= r.data) out.inCorso = inCorso;
   return out;
 }
 function puliziaReport_() {
   const limite = Utilities.formatDate(new Date(Date.now() - 3 * 864e5), TZ, 'yyyy-MM-dd');
-  Object.keys(P_().getProperties()).filter(k => /^(R|RC)_\d{4}-\d{2}-\d{2}/.test(k) && k.replace(/^RC?_/, '').slice(0, 10) < limite).forEach(k => P_().deleteProperty(k));
+  Object.keys(P_().getProperties()).filter(k => /^(R|RC|RF)_\d{4}-\d{2}-\d{2}/.test(k) && k.replace(/^R[CF]?_/, '').slice(0, 10) < limite).forEach(k => P_().deleteProperty(k));
+}
+// Il contenuto dei file del report (soluzioni, schemi) supera il limite di 9 KB di una proprietà:
+// si salva a pezzi da 3000 caratteri (al più 9 KB anche con caratteri accentati) in RF_<data>_<classe>_<file>_<pezzo>, il resto della classe in RC_<data>_<classe>.
+function salvaReportClasse_(data, cls, k) {
+  const pre = 'RF_' + data + '_' + cls + '_';
+  Object.keys(P_().getProperties()).filter(x => x.indexOf(pre) === 0).forEach(x => P_().deleteProperty(x));
+  const copia = Object.assign({}, k);
+  if (Array.isArray(k.files)) copia.files = k.files.map((f, i) => {
+    const t = String(f.contenuto || ''), n = Math.min(Math.ceil(t.length / 3000), 16), g = Object.assign({}, f, { contenuto: '', pezzi: n });
+    for (let j = 0; j < n; j++) P_().setProperty(pre + i + '_' + j, t.slice(j * 3000, (j + 1) * 3000));
+    if (t.length > 48000) g.desc = (g.desc ? g.desc + ' · ' : '') + 'troncato: file troppo lungo';
+    return g;
+  });
+  P_().setProperty('RC_' + data + '_' + cls, JSON.stringify(copia).slice(0, 8900));
+}
+function leggiReportClasse_(data, cls) {
+  const k = JSON.parse(P_().getProperty('RC_' + data + '_' + cls) || '{}');
+  if (Array.isArray(k.files)) k.files.forEach((f, i) => {
+    let t = ''; for (let j = 0; j < (f.pezzi || 0); j++) t += P_().getProperty('RF_' + data + '_' + cls + '_' + i + '_' + j) || '';
+    f.contenuto = t; delete f.pezzi;
+  });
+  return k;
 }
 const SCHEMA_REPORT = {
   type: 'object', additionalProperties: false,
@@ -403,8 +425,11 @@ const SCHEMA_REPORT = {
     motivo: { type: 'string', description: 'perché, con le fonti usate' },
     avviso: { type: 'string', description: 'avvisi (soluzione mancante, classi parallele sfasate, parti da verificare); vuoto se nessuno' },
     testo: { type: 'string', description: 'solo la comanda del nuovo esercizio da pubblicare; vuoto se non si propone un nuovo esercizio' },
-    files: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['n', 'o', 'url'],
-      properties: { n: { type: 'string' }, o: { type: 'string', description: 'già presente | da preparare' }, url: { type: 'string' } } } }
+    files: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['n', 'o', 'url', 'desc', 'mime', 'contenuto'],
+      properties: { n: { type: 'string' }, o: { type: 'string', description: 'già presente | prodotta da Claude | da preparare' }, url: { type: 'string' },
+        desc: { type: 'string', description: 'una riga: cosa contiene il file' },
+        mime: { type: 'string', description: 'text/plain per codice e SQL, image/svg+xml per gli schemi' },
+        contenuto: { type: 'string', description: 'testo completo del file se prodotto da Claude; vuoto se già presente' } } } }
   }
 };
 function generaReportClasse_(data, k) {
@@ -757,7 +782,10 @@ Compila:
 - motivo: perché, citando le fonti (firma del gg/mm, esercitazione su Classroom, esercizio dell'archivio).
 - avviso: segnalazioni utili, altrimenti stringa vuota.
 - testo: se proponi un nuovo esercizio, solo la comanda da pubblicare (il testo della richiesta come compare in cima all'esercizio dell'archivio), senza soluzione né commenti; altrimenti stringa vuota.
-- files: file utili per la lezione: soluzioni presenti nell'archivio o nello stream (o: "già presente", url: il link se c'è) oppure soluzioni che mancano (o: "da preparare", url: ""). Vuoto se non servono.
+- files: file utili per la lezione, ciascuno con desc (una riga: cosa contiene) e mime ("text/plain" per codice e SQL, "image/svg+xml" per gli schemi). Vuoto se non servono.
+  - Soluzioni presenti nell'archivio o nello stream: o "già presente", url il link se c'è, contenuto "".
+  - Soluzioni che mancano: scrivile tu (o "prodotta da Claude", url "", contenuto il file completo) usando solo ciò che la classe ha già visto; nell'avviso spiega le scelte e cosa adattare. Codice C++ nello stile del docente (tab, using namespace std, #define per le costanti). SQL per MySQL/MariaDB con i vincoli di dominio (CHECK) dove servono. Per un nuovo esercizio di database aggiungi anche lo schema concettuale/logico come SVG (UML con zampa di gallina, rombo solo sulle relazioni N-N, sfondo bianco, viewBox, niente script). Non dichiarare di aver compilato o eseguito il codice.
+  - Se non riesci a produrla con sicurezza: o "da preparare", url "", contenuto "".
 
 Come decidere:
 - Se l'ultimo contenuto è una lezione/materiale, il prossimo passo è la lezione o l'esercizio successivo nel percorso logico. Nomina solo ciò che i materiali coprono davvero (es. DML solo Insert se il materiale tratta solo Insert).
@@ -770,14 +798,22 @@ Come decidere:
 - Italiano, frasi brevi.`;
 
 /* ---------- snapshot ---------- */
+// Limite CacheService: 100 KB per voce. Con i file del report lo snapshot può superarlo: si salva a pezzi
+// da 30000 caratteri (al più 90 KB anche con caratteri accentati) in snapshot_0, snapshot_1, …
+const SNAP_PEZZO = 30000, SNAP_MAX = 450000;
 function scriviSnap_(obj) {
   let s = JSON.stringify(obj);
-  while (s.length >= 100000 && obj.documenti && obj.documenti.length) { obj.documenti.pop(); s = JSON.stringify(obj); } // i documenti più vecchi escono dallo snapshot
-  if (s.length < 100000) CacheService.getScriptCache().put(SNAP_KEY, s, CACHE_TTL); // limite CacheService: 100 KB
+  while (s.length >= SNAP_MAX && obj.documenti && obj.documenti.length) { obj.documenti.pop(); s = JSON.stringify(obj); } // i documenti più vecchi escono dallo snapshot
+  if (s.length >= SNAP_MAX) return;
+  const n = Math.ceil(s.length / SNAP_PEZZO), pezzi = { [SNAP_KEY + '_n']: String(n) };
+  for (let i = 0; i < n; i++) pezzi[SNAP_KEY + '_' + i] = s.slice(i * SNAP_PEZZO, (i + 1) * SNAP_PEZZO);
+  CacheService.getScriptCache().putAll(pezzi, CACHE_TTL);
 }
 function leggiSnap_() {
-  const s = CacheService.getScriptCache().get(SNAP_KEY);
-  return s ? JSON.parse(s) : null;
+  const c = CacheService.getScriptCache(), n = Number(c.get(SNAP_KEY + '_n') || 0); if (!n) return null;
+  const chiavi = Array.from({ length: n }, (_, i) => SNAP_KEY + '_' + i), v = c.getAll(chiavi);
+  if (chiavi.some(k => v[k] == null)) return null; // un pezzo scaduto: si ricostruisce
+  try { return JSON.parse(chiavi.map(k => v[k]).join('')); } catch (e) { return null; }
 }
 function uguali_(a, b) { // confronto a tempo costante
   if (a.length !== b.length) return false;

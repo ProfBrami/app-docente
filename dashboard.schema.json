@@ -80,6 +80,13 @@
         "vigore": {
           "type": "string",
           "description": "es. 12/10/2026"
+        },
+        "compresenza": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "facoltativo: classe → docente in compresenza (es. \"4C\": \"Mecarelli E.\"), mostrato nel Report lezioni"
         }
       }
     },
@@ -382,8 +389,82 @@
         "classi": {
           "type": "object",
           "additionalProperties": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "lang": {
+                "type": "string"
+              },
+              "arg": {
+                "type": "string"
+              },
+              "ultimo": {
+                "type": "string"
+              },
+              "prossimo": {
+                "type": "string"
+              },
+              "motivo": {
+                "type": "string"
+              },
+              "avviso": {
+                "type": "string"
+              },
+              "testo": {
+                "type": "string",
+                "description": "comanda del nuovo esercizio da pubblicare"
+              },
+              "con": {
+                "type": "string",
+                "description": "facoltativo: docente in compresenza (prevale su orario.compresenza)"
+              },
+              "errore": {
+                "type": "string"
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "n"
+                  ],
+                  "properties": {
+                    "n": {
+                      "type": "string",
+                      "description": "nome del file"
+                    },
+                    "o": {
+                      "type": "string",
+                      "description": "già presente | prodotta da Claude | da preparare"
+                    },
+                    "url": {
+                      "type": "string",
+                      "description": "link https (file già presente)"
+                    },
+                    "desc": {
+                      "type": "string",
+                      "description": "una riga sul contenuto"
+                    },
+                    "mime": {
+                      "type": "string",
+                      "description": "text/plain | image/svg+xml | image/png | image/jpeg | image/gif"
+                    },
+                    "contenuto": {
+                      "type": "string",
+                      "description": "testo completo del file: anteprima, Copia, Scarica e trascinamento"
+                    },
+                    "b64": {
+                      "type": "string",
+                      "description": "in alternativa a contenuto: file binario in base64"
+                    }
+                  }
+                }
+              }
+            }
           }
+        },
+        "fonti": {
+          "type": "string",
+          "description": "facoltativo: fonti usate, mostrate in fondo alla sezione"
         }
       }
     },
