@@ -8,6 +8,8 @@
  * - Ogni mattina alle 6 programma un'esecuzione 5 minuti dopo la fine di ogni blocco di ore (orario dal backend);
  *   a quell'ora raccoglie i contenuti dello stream creati o modificati dal docente dalla lezione precedente della
  *   classe e li invia al backend, che genera la firma con Claude.
+ * - Ogni 15 minuti (6–23) invia al backend le mail nuove della casella della scuola: il backend fa valutare a Claude
+ *   quali chiedono un adempimento al docente e solo quelle compaiono in Scadenze. Le altre vengono ignorate.
  * Script Properties: ENDPOINT (URL /exec del backend personale), TOKEN (lo stesso del backend).
  * Setup: verifica() per autorizzare e controllare, poi installa().
  */
@@ -35,6 +37,8 @@ function verifica() {
   Logger.log('Backend raggiungibile · orario: ' + (snap.orario ? 'presente' : 'MANCANTE'));
   Logger.log('Invio stato classi: ' + JSON.stringify(inviaStato()));
   Object.keys(ARCHIVIO).forEach(t => { try { Logger.log('Archivio %s (%s): %s esercizi', t, ARCHIVIO[t].nota, archivio_(ARCHIVIO[t], mioId_()).length); } catch (e) { Logger.log('Archivio %s → ERRORE: %s', t, e.message); } });
+  try { Logger.log('Posta della scuola: %s mail negli ultimi 2 giorni', GmailApp.search(QUERY_POSTA + ' newer_than:2d', 0, 50).length); Logger.log('Invio posta: ' + JSON.stringify(postaScuola())); }
+  catch (e) { Logger.log('Posta della scuola → ERRORE: %s', e.message); }
 }
 
 function installa() {
@@ -77,6 +81,7 @@ function firmeDovute() {
 function ciclo() {
   const adesso = new Date(), h = Number(Utilities.formatDate(adesso, TZ, 'H')), m = Number(Utilities.formatDate(adesso, TZ, 'm'));
   if (m % 15 < 5) inviaStato();
+  if (m % 15 < 5 && h >= 6 && h < 23) postaScuola();
   if (h >= 8 && h < 16) firmeDovute(); // rete di sicurezza se un trigger puntuale non è partito
   if (h >= 8 && h < 23) controllaReport();
 }
@@ -187,6 +192,34 @@ function streamDiff_(cls, da, a) {
   (Classroom.Courses.CourseWorkMaterials.list(id, { pageSize: 30, orderBy: 'updateTime desc' }).courseWorkMaterial || []).filter(dentro).forEach(x => out.push(base('materiale', x, x.description)));
   (Classroom.Courses.Announcements.list(id, { pageSize: 30, orderBy: 'updateTime desc' }).announcements || []).filter(dentro).forEach(x => out.push(base('annuncio', x, x.text)));
   return out.sort((p, q) => p.modificato.localeCompare(q.modificato));
+}
+
+/* ---------- posta della scuola ---------- */
+// Mail arrivate nella casella della scuola dall'ultimo invio riuscito (al primo avvio: ultimi 3 giorni).
+// Escluse promozioni/social, le mail inviate dal docente e le notifiche ClasseViva (le legge già il backend personale).
+const QUERY_POSTA = '-in:sent -in:chats -in:spam -in:trash -category:promotions -category:social -from:notification@spaggiari.eu';
+const POSTA_MAX = 15; // mail per invio: la valutazione con Claude deve stare nei tempi di una richiesta
+function postaScuola() {
+  const lock = LockService.getScriptLock(); if (!lock.tryLock(30000)) return { saltato: 'già in corso' };
+  try {
+    const da = Number(P_().getProperty('POSTA_DA') || Math.floor(Date.now() / 1000) - 3 * 86400);
+    const visti = JSON.parse(P_().getProperty('POSTA_VISTI') || '[]'), me = Session.getActiveUser().getEmail().toLowerCase();
+    const mail = [];
+    GmailApp.search(QUERY_POSTA + ' after:' + (da - 600), 0, 50).forEach(th => th.getMessages().forEach(m => {
+      if (m.isInTrash() || m.getDate().getTime() / 1000 < da - 600 || visti.includes(m.getId()) || m.getFrom().toLowerCase().includes(me)) return;
+      mail.push({ id: m.getId(), da: m.getFrom(), a: m.getTo(), oggetto: m.getSubject() || '', data: Utilities.formatDate(m.getDate(), TZ, 'dd/MM/yyyy HH:mm'),
+        testo: m.getPlainBody().replace(/\n{3,}/g, '\n\n').slice(0, 2500), allegati: m.getAttachments({ includeInlineImages: false }).map(x => x.getName()).slice(0, 8), t: m.getDate().getTime() });
+    }));
+    mail.sort((p, q) => p.t - q.t);
+    const lotto = mail.slice(0, POSTA_MAX);
+    const r = backendPost_({ azione: 'posta_scuola', account: me, mail: lotto.map(x => { const y = Object.assign({}, x); delete y.t; return y; }) });
+    if (!r || !r.ok) { Logger.log('Posta della scuola: invio fallito %s', JSON.stringify(r)); return r; }
+    // si avanza solo dopo un invio riuscito; gli id già inviati evitano doppioni nella finestra di sovrapposizione
+    const nuovi = visti.concat(lotto.map(x => x.id)).slice(-300);
+    P_().setProperty('POSTA_VISTI', JSON.stringify(nuovi));
+    P_().setProperty('POSTA_DA', String(lotto.length < mail.length ? Math.floor(lotto[lotto.length - 1].t / 1000) : Math.floor(Date.now() / 1000)));
+    return { ok: true, inviate: lotto.length, restano: mail.length - lotto.length, adempimenti: r.adempimenti };
+  } finally { lock.releaseLock(); }
 }
 
 /* ---------- orario ---------- */

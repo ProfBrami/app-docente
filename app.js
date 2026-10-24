@@ -26,7 +26,7 @@ const ORDINI = {
   sera:['report','orario','circolari','scadenze','firme','classi','ricond','orient','ut','note']
 };
 const NUM = {orario:'01',firme:'02',report:'03',circolari:'04',scadenze:'05',classi:'06',ricond:'07',orient:'08',ut:'09',note:'10'};
-const FONTI = [['gmail','Gmail'],['classroom','Classroom'],['calendar','Calendar'],['classeviva','ClasseViva']];
+const FONTI = [['gmail','Gmail'],['posta_scuola','Posta scuola'],['classroom','Classroom'],['calendar','Calendar'],['classeviva','ClasseViva']];
 const STATI = ['Aperta','In corso','Chiusa'];
 const LABS = ['Arrakis','Matrix','Lab. 21','Neo Tokio','Skynet','Altro'];
 const MOCK_NOME = new URLSearchParams(location.search).get('mock') || '';
@@ -563,9 +563,10 @@ function secScadenze(x, c) {
     return { ...s, n, dd: dmy(dt), count: n < 0 ? 'scaduta' : n === 0 ? 'oggi' : n === 1 ? 'domani' : 'tra ' + n + ' gg', col: n <= 1 ? 'var(--color-accent-700)' : 'color-mix(in srgb,var(--color-text) 60%,transparent)', w: n <= 2 ? 700 : 400 };
   }).filter(s => s && s.n >= -1).sort((a, b) => a.n - b.n);
   let inner = `<header class="sec-h"><div><span class="kicker">${esc(c.k.scadenze)}</span><h3>Scadenze e adempimenti</h3></div></header>`;
-  const gm = fonte('gmail'), ca = fonte('calendar');
-  if (!list.length) inner += (gm.ok || ca.ok) ? empty('Nessuna scadenza in vista', 'Da posta e Calendar non risultano adempimenti nei prossimi giorni.') : empty('Nessun dato da Gmail e Calendar', [gm.errore, ca.errore].filter(Boolean).join(' · '));
-  else inner += `<ul class="plain">${list.map(s => `<li class="li sc"><span class="col" style="align-items:flex-start"><span class="sc-dd">${s.dd}</span><span style="font-size:11px;color:${s.col};font-weight:${s.w}">${s.count}</span></span><span class="col" style="gap:2px;min-width:0"><span style="font-weight:500;text-wrap:pretty">${esc(s.t)}</span><span class="small m62">${esc(s.src)}</span></span></li>`).join('')}</ul>`;
+  const gm = fonte('gmail'), ca = fonte('calendar'), ps = fonte('posta_scuola');
+  if (!list.length) inner += (gm.ok || ca.ok || ps.ok) ? empty('Nessuna scadenza in vista', 'Da posta e Calendar non risultano adempimenti nei prossimi giorni.') : empty('Nessun dato da Gmail e Calendar', [gm.errore, ca.errore].filter(Boolean).join(' · '));
+  // gli adempimenti dalla posta della scuola hanno il link alla mail e si nascondono con "Già fatto"
+  else inner += `<ul class="plain">${list.map(s => { const u = safeUrl(s.url); return `<li class="li sc"><span class="col" style="align-items:flex-start"><span class="sc-dd">${s.dd}</span><span style="font-size:11px;color:${s.col};font-weight:${s.w}">${s.count}</span></span><span class="col" style="gap:2px;min-width:0">${u ? `<a href="${u}" target="_blank" rel="noopener" style="font-weight:500;text-wrap:pretty;color:inherit">${esc(s.t)}</a>` : `<span style="font-weight:500;text-wrap:pretty">${esc(s.t)}</span>`}<span class="small m62">${esc(s.src)}</span>${s.ps && s.id ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="nascondi" data-id="${esc(s.id)}">Già fatto · nascondi</button>` : ''}</span></li>`; }).join('')}</ul>`;
   return sec('scadenze', c, inner, 12);
 }
 
