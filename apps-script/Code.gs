@@ -124,7 +124,7 @@ function leggiPosta_() {
   const circolari = [], scadenze = [];
   let ricond = null, ricondData = null, letti = 0;
   const fea = {}; // documento → stato più recente
-  const link = linkGmail_(Session.getEffectiveUser().getEmail());
+  const link = linkGmail_(mioAccount_());
 
   threads.forEach(th => th.getMessages().forEach(m => {
     if (m.isInTrash()) return;
@@ -219,7 +219,11 @@ function unisciClassi_(live, skill) { // i dati della skill (più ricchi) comple
 
 /* ---------- posta della scuola (casella ciusa.edu.it, letta dallo script della scuola) ---------- */
 // Link a una mail nell'account indicato (authuser), non nel primo account collegato nel browser.
-const linkGmail_ = account => id => 'https://mail.google.com/mail/?authuser=' + encodeURIComponent(account || '') + '#all/' + id;
+// Senza l'indirizzo (autorizzazione userinfo.email mancante) il link resta generico: la posta si legge comunque.
+const linkGmail_ = account => id => 'https://mail.google.com/mail/' + (account ? '?authuser=' + encodeURIComponent(account) : 'u/0/') + '#all/' + id;
+function mioAccount_() {
+  try { return Session.getEffectiveUser().getEmail() || ''; } catch (e) { return ''; }
+}
 const SCHEMA_POSTA = {
   type: 'object', additionalProperties: false, required: ['adempimenti'],
   properties: { adempimenti: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['id', 'cosa', 'scadenza', 'richiesta_da'],
