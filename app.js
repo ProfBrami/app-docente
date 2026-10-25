@@ -510,6 +510,7 @@ function secCircolari(x, c) {
   const numero = t => (String(t).match(/circ\.?\s*(\d+)/i) || [])[1];
   // "Segna come letta": vale subito sul dispositivo, poi il backend la segna come letta anche in Gmail
   const items = (Array.isArray(d.circolari) ? d.circolari : []).filter(i => !(i.id && S.nascoste.includes(i.id)) && !analizzate.has(numero(i.titolo)))
+    .filter(i => !(i.id && daClasseviva(i) && S.lette.includes(i.id))) // notifica ClasseViva letta = cestinata: esce dall'elenco
     .map(i => i.nuova && i.id && S.lette.includes(i.id) ? { ...i, nuova: false } : i);
   const nNew = items.filter(i => i.nuova).length;
   const tagCls = r => (r === 'Informativa' || r === 'Completato' || r === 'Non di competenza') ? 'tag-neutral' : (r === 'Adempimento' || r === 'Da aprire') ? 'tag-outline' : 'tag-accent';
@@ -527,7 +528,7 @@ function secCircolari(x, c) {
   if (!items.length) inner += g.ok ? empty('Nessuna notifica da analizzare', 'Le notifiche di ClasseViva, SIF2127, FEA, Cineca e Segreteria compariranno qui.') : empty('Nessun dato da Gmail', g.errore || 'Controlla il backend Apps Script.');
   else inner += `<ul class="plain">${items.map(i => {
     const cv = daClasseviva(i), u = cv ? (IOS ? CLASSEVIVA_COMANDO : CLASSEVIVA_BACHECA) : safeUrl(i.url), t = esc(i.titolo);
-    return `<li class="li circ"><div class="circ-h">${u ? `<a class="circ-t" href="${esc(u)}"${cv && IOS ? '' : ' target="_blank" rel="noopener"'}${cv ? ' title="Apri in ClasseViva"' : ''}>${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</a>` : `<span class="circ-t">${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</span>`}<span class="tag ${tagCls(i.rig)}">${esc(i.rig)}</span></div><span class="circ-n m70">${esc(i.nota)}</span>${i.nuova && i.id ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="letta" data-id="${esc(i.id)}">Segna come letta</button>` : ''}${i.id && (i.fonte === 'SIF2127' || i.fonte === 'FEA' || i.rig === 'Adempimento') ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="nascondi" data-id="${esc(i.id)}">Già fatto · nascondi</button>` : ''}</li>`;
+    return `<li class="li circ"><div class="circ-h">${u ? `<a class="circ-t" href="${esc(u)}"${cv && IOS ? '' : ' target="_blank" rel="noopener"'}${cv ? ' title="Apri in ClasseViva"' : ''}>${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</a>` : `<span class="circ-t">${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</span>`}<span class="tag ${tagCls(i.rig)}">${esc(i.rig)}</span></div><span class="circ-n m70">${esc(i.nota)}</span>${i.nuova && i.id ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="letta" data-id="${esc(i.id)}"${daClasseviva(i) ? ' title="Segna come letta e sposta la mail di notifica nel Cestino di Gmail"' : ''}>Segna come letta</button>` : ''}${i.id && (i.fonte === 'SIF2127' || i.fonte === 'FEA' || i.rig === 'Adempimento') ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="nascondi" data-id="${esc(i.id)}">Già fatto · nascondi</button>` : ''}</li>`;
   }).join('')}</ul>`;
   return sec('circolari', c, inner + cmdFooter('circolari', true, true), 12);
 }

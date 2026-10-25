@@ -102,7 +102,7 @@ function aggiorna() {
     const snap = {
       meta: { aggiornato: new Date().toISOString(), fonti },
       circolari: filtraCircolari_(posta.circolari),
-      scadenze: filtraCircolari_([...posta.scadenze, ...cal.scadenze, ...scadenzeDoc_(), ...postaScuola_()]).sort((a, b) => (a.d || '9999').localeCompare(b.d || '9999')),
+      scadenze: filtraCircolari_([...posta.scadenze, ...cal.scadenze, ...scadenzeDoc_(), ...postaScuola_(), ...scadenzeSalvate_().filter(x => !posta.scadenze.some(y => y.t === x.t && y.d === x.d))]).sort((a, b) => (a.d || '9999').localeCompare(b.d || '9999')),
       supplenze: { ore: unisciSupplenze_(extra.supplenze) },
       documenti: documentiSnap_(),
       report: reportSnap_(),
@@ -189,13 +189,15 @@ function dataEntro_(txt) { // "entro il 31/10/2026" → "2026-10-31"
   return m ? `${m[3]}-${('0' + m[2]).slice(-2)}-${('0' + m[1]).slice(-2)}` : null;
 }
 function dedup_(arr) { // stesso titolo e fonte (es. stati successivi FEA, notifiche ripetute): tiene il più recente
-  const best = {}, nonLette = {}; // nonLette: id di tutte le mail non lette della stessa circolare ("Segna come letta" le segna tutte)
+  // nonLette: id delle mail non lette della stessa circolare ("Segna come letta" le segna tutte); tutte: per il Cestino
+  const best = {}, nonLette = {}, tutte = {};
   arr.forEach(c => {
     const k = c.fonte + '|' + c.titolo;
+    (tutte[k] = tutte[k] || []).push(c.id);
     if (c.nuova) (nonLette[k] = nonLette[k] || []).push(c.id);
     if (!best[k] || c.data > best[k].data) best[k] = Object.assign({}, c);
   });
-  return Object.keys(best).map(k => Object.assign(best[k], { nuova: !!nonLette[k], nonLette: nonLette[k] || [] }));
+  return Object.keys(best).map(k => Object.assign(best[k], { nuova: !!nonLette[k], nonLette: nonLette[k] || [], tutte: tutte[k].length > 1 ? tutte[k].slice(0, 10) : undefined }));
 }
 function capit_(s) { return s.replace(/^circ\.?\s*(\d+)\s*[-–]?\s*/i, 'Circ. $1 – ').replace(/^\S/, c => c.toUpperCase()); }
 
@@ -361,7 +363,7 @@ function ritoccaSnap_() { // aggiorna firme e classi nello snapshot senza rilegg
   snap.report = reportSnap_();
   snap.documenti = documentiSnap_();
   snap.supplenze = { ore: unisciSupplenze_(ex.supplenze) };
-  snap.scadenze = filtraCircolari_([...(snap.scadenze || []).filter(x => !x.doc && !x.ps), ...scadenzeDoc_(), ...postaScuola_()]).sort((a, b) => (a.d || '9999').localeCompare(b.d || '9999'));
+  snap.scadenze = filtraCircolari_([...(snap.scadenze || []).filter(x => !x.doc && !x.ps && !x.salvata), ...scadenzeDoc_(), ...postaScuola_(), ...scadenzeSalvate_().filter(x => !(snap.scadenze || []).some(y => !y.salvata && y.t === x.t && y.d === x.d))]).sort((a, b) => (a.d || '9999').localeCompare(b.d || '9999'));
   snap.classi = unisciClassi_(cr.classi, ex.classi);
   snap.meta.fonti.classroom = cr.fonte;
   snap.meta.fonti.posta_scuola = statoPostaScuola_();
@@ -397,15 +399,43 @@ function nascondiCircolare_(b) {
 }
 
 // b: { id } — "Segna come letta" dall'app: segna come lette in Gmail tutte le mail di notifica di quella circolare.
+// Le notifiche di ClasseViva / Segreteria Digitale (la circolare resta su ClasseViva) vanno anche nel Cestino
+// (recuperabili per 30 giorni): la circolare esce dall'elenco, la sua eventuale scadenza viene salvata e resta.
 function segnaLetta_(b) {
   if (!b.id) return { errore: 'id mancante' };
   const snap = leggiSnap_(), c = snap && (snap.circolari || []).find(x => x.id === b.id);
   const ids = Array.from(new Set([b.id].concat((c && c.nonLette) || [])));
-  let fatte = 0;
-  ids.forEach(id => { try { const m = GmailApp.getMessageById(id); if (m) { m.markRead(); fatte++; } } catch (e) {} });
-  // mail non trovata (cancellata o spostata): niente da segnare, ma la richiesta non deve restare in coda nell'app
-  if (c) { c.nuova = false; c.nonLette = []; snap.circolari.sort((p, q) => (q.nuova - p.nuova) || q.data.localeCompare(p.data)); scriviSnap_(snap); }
-  return { ok: true, lette: fatte };
+  let lette = 0, cestinate = 0;
+  ids.forEach(id => {
+    try {
+      const m = GmailApp.getMessageById(id); if (!m) return;
+      m.markRead(); lette++;
+      if (m.getFrom().toLowerCase().includes('spaggiari')) { m.moveToTrash(); cestinate++; }
+    } catch (e) {}
+  });
+  // anche le notifiche già lette della stessa circolare (ripetute) vanno nel Cestino, altrimenti la circolare ricomparirebbe
+  if (cestinate && c) [c.id].concat(c.tutte || []).filter(id => id && ids.indexOf(id) < 0).forEach(id => { try { GmailApp.getMessageById(id).moveToTrash(); } catch (e) {} });
+  if (c && snap) {
+    if (cestinate) {
+      const sc = (snap.scadenze || []).filter(x => !x.salvata && x.t === c.titolo);
+      if (sc.length) salvaScadenze_(sc);
+      snap.circolari = snap.circolari.filter(x => x !== c);
+      snap.scadenze = filtraCircolari_([...(snap.scadenze || []).filter(x => !x.salvata && x.t !== c.titolo), ...scadenzeSalvate_()]).sort((p, q) => (p.d || '9999').localeCompare(q.d || '9999'));
+    } else { c.nuova = false; c.nonLette = []; snap.circolari.sort((p, q) => (q.nuova - p.nuova) || q.data.localeCompare(p.data)); }
+    scriviSnap_(snap);
+  }
+  // mail non trovata (cancellata o spostata): niente da fare, ma la richiesta non deve restare in coda nell'app
+  return { ok: true, lette, cestinate };
+}
+// Scadenze di circolari la cui notifica è stata cestinata: restano finché non scadono (3 giorni dopo) o, senza data, 30 giorni.
+function salvaScadenze_(arr) {
+  const ora = new Date().toISOString(), tutte = arr.map(x => Object.assign({}, x, { salvata: true, il: ora }))
+    .concat(scadenzeSalvate_().filter(y => !arr.some(x => x.t === y.t && x.d === y.d)));
+  P_().setProperty('SC_SALVATE', JSON.stringify(tutte.slice(0, 60)));
+}
+function scadenzeSalvate_() {
+  const limite = Utilities.formatDate(new Date(Date.now() - 3 * 864e5), TZ, 'yyyy-MM-dd'), vecchio = new Date(Date.now() - 30 * 864e5).toISOString();
+  return JSON.parse(P_().getProperty('SC_SALVATE') || '[]').filter(x => x.d ? x.d >= limite : x.il >= vecchio);
 }
 
 /* ---------- report lezioni ---------- */
