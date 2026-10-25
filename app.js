@@ -43,7 +43,7 @@ const CLASSEVIVA_BACHECA = 'https://web.spaggiari.eu/sif/app/default/bacheca_per
 const CLASSEVIVA_COMANDO = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Apri ClasseViva');
 const daClasseviva = i => i.fonte === 'ClasseViva' || i.fonte === 'Segreteria Digitale';
 const claudeLink = t => `href="${(MAC ? 'claude://claude.ai/new?q=' : 'https://claude.ai/new?q=') + encodeURIComponent(t)}"${MAC ? '' : ' target="_blank" rel="noopener"'}`;
-const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda',nascoste:'pd_circ_nascoste'};
+const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda',nascoste:'pd_circ_nascoste',lette:'pd_circ_lette'};
 
 const CORNERS = '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
 const ICON_ALERT = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>';
@@ -84,7 +84,7 @@ const S = {
   data: null, loading: false, refreshing: false, error: null, lastFetch: 0, offline: false, cachedAt: null,
   mock: LOCALE && (Q.has('mock') || ls.get(K.endpoint) === 'mock'),
   setup: false, setupErr: '', pin: null, copied: null,
-  done: ls.json(K.done, {}), mod: ls.json(K.mod, {}), coda: ls.json(K.coda, []), nascoste: ls.json(K.nascoste, []), ultimaFirmata: 0, invio: null, invioErr: '', trascina: false, tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
+  done: ls.json(K.done, {}), mod: ls.json(K.mod, {}), coda: ls.json(K.coda, []), nascoste: ls.json(K.nascoste, []), lette: ls.json(K.lette, []), ultimaFirmata: 0, invio: null, invioErr: '', trascina: false, tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
   utLab: LABS[0], utText: '',
   variante: ls.get(K.variante, 'A'), tema: ls.get(K.tema, 'auto')
 };
@@ -508,7 +508,9 @@ function secCircolari(x, c) {
   const jobs = Array.isArray(d.documenti) ? d.documenti : [];
   const analizzate = new Set(jobs.flatMap(j => ((j.analisi && j.analisi.circolari) || []).map(z => String(z.numero || '').replace(/\D/g, ''))).filter(Boolean));
   const numero = t => (String(t).match(/circ\.?\s*(\d+)/i) || [])[1];
-  const items = (Array.isArray(d.circolari) ? d.circolari : []).filter(i => !(i.id && S.nascoste.includes(i.id)) && !analizzate.has(numero(i.titolo)));
+  // "Segna come letta": vale subito sul dispositivo, poi il backend la segna come letta anche in Gmail
+  const items = (Array.isArray(d.circolari) ? d.circolari : []).filter(i => !(i.id && S.nascoste.includes(i.id)) && !analizzate.has(numero(i.titolo)))
+    .map(i => i.nuova && i.id && S.lette.includes(i.id) ? { ...i, nuova: false } : i);
   const nNew = items.filter(i => i.nuova).length;
   const tagCls = r => (r === 'Informativa' || r === 'Completato' || r === 'Non di competenza') ? 'tag-neutral' : (r === 'Adempimento' || r === 'Da aprire') ? 'tag-outline' : 'tag-accent';
   let inner = head('circolari', c, 'Circolari', `<span class="tag tag-accent">${items.length ? (nNew ? nNew + ' nuove' : 'Nessuna nuova') : '—'}</span>`);
@@ -525,7 +527,7 @@ function secCircolari(x, c) {
   if (!items.length) inner += g.ok ? empty('Nessuna notifica da analizzare', 'Le notifiche di ClasseViva, SIF2127, FEA, Cineca e Segreteria compariranno qui.') : empty('Nessun dato da Gmail', g.errore || 'Controlla il backend Apps Script.');
   else inner += `<ul class="plain">${items.map(i => {
     const cv = daClasseviva(i), u = cv ? (IOS ? CLASSEVIVA_COMANDO : CLASSEVIVA_BACHECA) : safeUrl(i.url), t = esc(i.titolo);
-    return `<li class="li circ"><div class="circ-h">${u ? `<a class="circ-t" href="${esc(u)}"${cv && IOS ? '' : ' target="_blank" rel="noopener"'}${cv ? ' title="Apri in ClasseViva"' : ''}>${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</a>` : `<span class="circ-t">${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</span>`}<span class="tag ${tagCls(i.rig)}">${esc(i.rig)}</span></div><span class="circ-n m70">${esc(i.nota)}</span>${i.id && (i.fonte === 'SIF2127' || i.fonte === 'FEA' || i.rig === 'Adempimento') ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="nascondi" data-id="${esc(i.id)}">Già fatto · nascondi</button>` : ''}</li>`;
+    return `<li class="li circ"><div class="circ-h">${u ? `<a class="circ-t" href="${esc(u)}"${cv && IOS ? '' : ' target="_blank" rel="noopener"'}${cv ? ' title="Apri in ClasseViva"' : ''}>${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</a>` : `<span class="circ-t">${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</span>`}<span class="tag ${tagCls(i.rig)}">${esc(i.rig)}</span></div><span class="circ-n m70">${esc(i.nota)}</span>${i.nuova && i.id ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="letta" data-id="${esc(i.id)}">Segna come letta</button>` : ''}${i.id && (i.fonte === 'SIF2127' || i.fonte === 'FEA' || i.rig === 'Adempimento') ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="nascondi" data-id="${esc(i.id)}">Già fatto · nascondi</button>` : ''}</li>`;
   }).join('')}</ul>`;
   return sec('circolari', c, inner + cmdFooter('circolari', true, true), 12);
 }
@@ -797,6 +799,11 @@ document.addEventListener('click', e => {
     const v = Number(el.dataset.val); S.done = { ...S.done, [el.dataset.key]: v }; ls.set(K.done, S.done);
     if (v) S.ultimaFirmata = Date.now();
     accoda({ azione: 'firmata', data: el.dataset.data, ora: Number(el.dataset.ora), valore: !!v }, q => q.azione === 'firmata' && q.data === el.dataset.data && q.ora === Number(el.dataset.ora));
+    render();
+  }
+  else if (a === 'letta') {
+    const id = el.dataset.id; S.lette = [id, ...S.lette.filter(z => z !== id)].slice(0, 300); ls.set(K.lette, S.lette);
+    accoda({ azione: 'letta', id }, q => q.azione === 'letta' && q.id === id);
     render();
   }
   else if (a === 'nascondi') {

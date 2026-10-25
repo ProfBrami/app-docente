@@ -71,6 +71,7 @@ function doPost(e) {
     if (b.azione === 'report') return json_(riceviReport_(b));
     if (b.azione === 'report_verificato') return json_(reportVerificato_(b));
     if (b.azione === 'nascondi') return json_(nascondiCircolare_(b));
+    if (b.azione === 'letta') return json_(segnaLetta_(b));
     if (b.azione === 'documenti') return json_(riceviDocumenti_(b));
     if (b.azione === 'posta_scuola') return json_(riceviPostaScuola_(b));
     return json_({ errore: 'azione sconosciuta' });
@@ -188,9 +189,13 @@ function dataEntro_(txt) { // "entro il 31/10/2026" → "2026-10-31"
   return m ? `${m[3]}-${('0' + m[2]).slice(-2)}-${('0' + m[1]).slice(-2)}` : null;
 }
 function dedup_(arr) { // stesso titolo e fonte (es. stati successivi FEA, notifiche ripetute): tiene il più recente
-  const best = {};
-  arr.forEach(c => { const k = c.fonte + '|' + c.titolo; if (!best[k] || c.data > best[k].data) best[k] = Object.assign({}, c, { nuova: !!(c.nuova || (best[k] && best[k].nuova)) }); });
-  return Object.keys(best).map(k => best[k]);
+  const best = {}, nonLette = {}; // nonLette: id di tutte le mail non lette della stessa circolare ("Segna come letta" le segna tutte)
+  arr.forEach(c => {
+    const k = c.fonte + '|' + c.titolo;
+    if (c.nuova) (nonLette[k] = nonLette[k] || []).push(c.id);
+    if (!best[k] || c.data > best[k].data) best[k] = Object.assign({}, c);
+  });
+  return Object.keys(best).map(k => Object.assign(best[k], { nuova: !!nonLette[k], nonLette: nonLette[k] || [] }));
 }
 function capit_(s) { return s.replace(/^circ\.?\s*(\d+)\s*[-–]?\s*/i, 'Circ. $1 – ').replace(/^\S/, c => c.toUpperCase()); }
 
@@ -389,6 +394,18 @@ function nascondiCircolare_(b) {
   const snap = leggiSnap_();
   if (snap) { snap.circolari = filtraCircolari_(snap.circolari || []); snap.scadenze = filtraCircolari_(snap.scadenze || []); scriviSnap_(snap); }
   return { ok: true };
+}
+
+// b: { id } — "Segna come letta" dall'app: segna come lette in Gmail tutte le mail di notifica di quella circolare.
+function segnaLetta_(b) {
+  if (!b.id) return { errore: 'id mancante' };
+  const snap = leggiSnap_(), c = snap && (snap.circolari || []).find(x => x.id === b.id);
+  const ids = Array.from(new Set([b.id].concat((c && c.nonLette) || [])));
+  let fatte = 0;
+  ids.forEach(id => { try { const m = GmailApp.getMessageById(id); if (m) { m.markRead(); fatte++; } } catch (e) {} });
+  // mail non trovata (cancellata o spostata): niente da segnare, ma la richiesta non deve restare in coda nell'app
+  if (c) { c.nuova = false; c.nonLette = []; snap.circolari.sort((p, q) => (q.nuova - p.nuova) || q.data.localeCompare(p.data)); scriviSnap_(snap); }
+  return { ok: true, lette: fatte };
 }
 
 /* ---------- report lezioni ---------- */
