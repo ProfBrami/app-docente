@@ -593,7 +593,45 @@ ${(k.esempi || []).map(x => `--- ${x.nome} (${x.esercizio}) ---\n${x.contenuto}`
 
 Compila il report di questa classe per la lezione indicata.`;
   const j = chiamaClaude_(REGOLE_REPORT, user, { type: 'json_schema', schema: SCHEMA_REPORT });
-  return JSON.parse(j);
+  const r = JSON.parse(j);
+  (r.files || []).forEach(f => { if (f.contenuto && /\.(cpp|cc|c|h)$/i.test(f.n || '')) f.contenuto = stileCpp_(f.contenuto); });
+  return r;
+}
+
+// Formattazione del docente sul C++ scritto da Claude (il modello tende a rimettere gli spazi):
+// niente spazi attorno agli operatori (cout<<x<<endl, x=y+1, i<n), if(/for(/while(/switch( attaccati,
+// graffa d'apertura sulla stessa riga. Restano gli spazi attorno a && e ||, dopo le virgole e nelle stringhe e nei commenti.
+const OP_CPP = ['<<=', '>>=', '<<', '>>', '<=', '>=', '==', '!=', '+=', '-=', '*=', '/=', '%=', '=', '+', '-', '*', '/', '%', '<', '>'];
+function stileCpp_(src) {
+  const righe = String(src).replace(/\r\n/g, '\n').split('\n').map(riga => {
+    if (/^\s*#/.test(riga)) return riga; // #include, #define
+    let out = '', i = 0;
+    while (i < riga.length) { // separa codice da stringhe, caratteri e commenti
+      const c = riga[i];
+      if (c === '/' && riga[i + 1] === '/') { out += riga.slice(i); break; }
+      if (c === '"' || c === "'") {
+        let k = i + 1; while (k < riga.length && riga[k] !== c) k += riga[k] === '\\' ? 2 : 1;
+        out += riga.slice(i, k + 1); i = k + 1; continue;
+      }
+      let k = i; while (k < riga.length && riga[k] !== '"' && riga[k] !== "'" && !(riga[k] === '/' && riga[k + 1] === '/')) k++;
+      out += codiceCpp_(riga.slice(i, k), i === 0); i = k;
+    }
+    return out.replace(/\s+$/, '');
+  });
+  const out = []; // graffa da sola su una riga → in fondo alla riga precedente
+  righe.forEach(r => {
+    const prec = out.length - 1;
+    if (/^\s*\{\s*$/.test(r) && prec >= 0 && out[prec].trim() && !/(\/\/.*|[;{}])\s*$/.test(out[prec])) out[prec] += ' {';
+    else out.push(r);
+  });
+  return out.join('\n');
+}
+function codiceCpp_(t, inizioRiga) {
+  const rientro = inizioRiga ? (t.match(/^\s*/) || [''])[0] : '';
+  let x = t.slice(rientro.length);
+  OP_CPP.forEach(op => { x = x.split(' ' + op + ' ').join(op); });
+  x = x.replace(/\b(if|for|while|switch|catch)\s+\(/g, '$1(').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').replace(/\s+;/g, ';');
+  return rientro + x;
 }
 
 /* ---------- documenti trascinati nell'app ---------- */
@@ -945,7 +983,7 @@ Compila:
 
 STILE DEL DOCENTE per le soluzioni che scrivi:
 - Prima di scrivere studia <esempi_di_stile>: sono soluzioni scritte dal docente negli anni precedenti. Imitane struttura del file, commento d'apertura, nomi di variabili e funzioni, messaggi di input/output, commenti e formattazione. Le regole che seguono valgono sempre; dove gli esempi non dicono nulla, valgono da sole.
-- C++: rientro con tabulazione; #include <iostream> (e solo le librerie già usate dalla classe); using namespace std; costanti con #define; niente spazi superflui tra i token: for(int i=0;i<n;i++), if(a>b), cout<<"Totale: "<<t<<endl.
+- C++: rientro con tabulazione; #include <iostream> (e solo le librerie già usate dalla classe); using namespace std; costanti con #define; graffa d'apertura sulla stessa riga (int main() {, void stampa(int v[]) {, } else {); NESSUNO spazio attorno agli operatori e dopo if/for/while/switch. Spazi solo attorno a && e ||, dopo la virgola dove serve leggibilità e nelle stringhe. Così SÌ: if(imp<=0 || imp>saldo) return false;  saldo+=amt;  for(int i=0;i<n;i++) {  cout<<"Saldo: "<<saldo<<endl;  cin>>x;  *s=*s+*imp;  Così NO: if (imp <= 0), saldo += amt, cout << "Saldo: " << saldo << endl, { su una riga da sola. Istruzioni brevi sulla stessa riga del controllo quando stanno in una riga: if(file) file.close();
 - Solo ciò che la classe ha già visto: ricavalo da firme del registro, stream e posizione dell'esercizio nel percorso. Puntatori e accesso indiretto dove la classe li ha già visti; allocazione dinamica, file, classi o STL solo se già spiegati.
 - Commento d'apertura con la comanda dell'esercizio; commenti brevi in italiano sui passaggi chiave del ragionamento, utili alla correzione guidata in classe.
 - Nome del file nello schema del docente, coerente con il numero dell'esercitazione di quest'anno (es. Es14bis_4a.cpp; per SQL Popolazione_sol.sql).
