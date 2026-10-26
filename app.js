@@ -326,7 +326,9 @@ function renderTimeline(x) {
 function secOrario(x, c) {
   const { M, mins, today, todayL, ndLabel, d: dati } = x;
   const supp = ((dati.supplenze && dati.supplenze.ore) || []).filter(o => o && o.data && o.ora);
-  let suppInVista = false;
+  // mie verifiche dall'agenda ClasseViva (agenda.json): ore = mie ore della classe toccate dalla verifica
+  const ver = ((dati.agenda && dati.agenda.eventi) || []).filter(e => e && e.verifica && Array.isArray(e.ore));
+  let suppInVista = false, verInVista = false;
   if (!M.has) return sec('orario', c, head('orario', c, 'Orario · prossimi giorni') + empty('Nessun dato da orario.json', 'Esegui la skill orario-docente-promemoria: salva orario.json nella cartella Drive “Dashboard Docente/dati”.') + cmdFooter('orario', false));
   const cols = `grid-template-columns:72px repeat(${M.ore.length},minmax(52px,1fr))`;
   let html = `<div class="og" style="${cols}"><span></span>${M.ore.map(h => `<span class="og-h"><b>${h.n}ª</b><span class="m60">${h.s}–${h.e}</span></span>`).join('')}</div>`;
@@ -334,7 +336,7 @@ function secOrario(x, c) {
   for (let i = 0; rows < 6 && i < 8; i++) {
     const d = addDays(today, i); if (d.getDay() === 0) continue; rows++;
     const ls_ = M.lessons(d), byN = {}; ls_.forEach(l => { byN[l.n] = l; });
-    const suppGiorno = supp.filter(o => o.data === iso(d));
+    const suppGiorno = supp.filter(o => o.data === iso(d)), verGiorno = ver.filter(e => e.data === iso(d));
     const label = i === 0 ? 'Oggi' : i === 1 ? 'Domani' : G3[d.getDay()] + ' ' + d.getDate();
     const cells = !ls_.length && !suppGiorno.length ? '<span class="og-free m60">Giorno libero</span>' : M.ore.map(h => {
       const su = suppGiorno.find(o => Number(o.ora) === h.n);
@@ -344,10 +346,14 @@ function secOrario(x, c) {
         return `<span class="og-c og-sup" style="opacity:${past ? 0.45 : 1}" title="${esc('Supplenza ' + (su.classe || '') + (su.aula ? ' · ' + su.aula : '') + (su.sostituisce ? ' · al posto di ' + su.sostituisce : ''))}"><b>${esc(su.classe || 'Suppl.')}</b><span>Supplenza${su.aula ? ' · ' + esc(su.aula) : ''}</span></span>`;
       }
       const l = byN[h.n], isNow = i === 0 && l && mins >= tm(h.s) && mins < tm(h.e), past = i === 0 && mins >= tm(h.e);
-      const bd = l ? (isNow ? 'var(--color-accent)' : 'var(--color-divider)') : 'transparent';
+      const vs = l ? verGiorno.filter(e => e.classe === l.cls && e.ore.includes(h.n)) : [];
+      if (vs.length) verInVista = true;
+      const bd = l ? (isNow || vs.length ? 'var(--color-accent)' : 'var(--color-divider)') : 'transparent';
       const bg = isNow ? 'var(--color-accent)' : l ? 'transparent' : 'color-mix(in srgb,var(--color-text) 3%,transparent)';
       const fg = isNow ? 'var(--color-bg)' : l ? 'var(--color-text)' : 'color-mix(in srgb,var(--color-text) 35%,transparent)';
-      return `<span class="og-c" style="border-color:${bd};background:${bg};color:${fg};opacity:${past ? 0.45 : 1}"><b>${esc(l ? l.cls : '·')}</b><span>${esc(l ? l.lab : '')}</span></span>`;
+      const sub = vs.length ? 'Verifica' : (l ? l.lab : '');
+      const tit = vs.length ? ` title="${esc(vs.map(e => e.testo).join('\n'))}"` : '';
+      return `<span class="og-c${vs.length ? ' og-ver' : ''}"${tit} style="border-color:${bd};background:${bg};color:${fg};opacity:${past ? 0.45 : 1}"><b>${esc(l ? l.cls : '·')}</b><span${vs.length && !isNow ? ' style="font-weight:600;color:var(--color-accent-700)"' : ''}>${esc(sub)}</span></span>`;
     }).join('');
     html += `<div class="og" style="${cols}"><span class="og-d"><b style="color:${i === 0 ? 'var(--color-accent-700)' : 'var(--color-text)'}">${label}</b><span class="m60">${G3[d.getDay()]} ${dmy(d)}</span></span>${cells}</div>`;
   }
@@ -355,7 +361,8 @@ function secOrario(x, c) {
   const prom = pend.length ? pend.map(l => l.e + ' firma ' + l.cls).join(' · ') + '  (avviso 5 min prima della fine dell\'ora)'
     : todayL.length ? 'Lezioni di oggi concluse: le firme sono nella sezione 02.' : 'Oggi nessuna ora da firmare. Prossimo giorno: ' + ndLabel + '.';
   const tag = M.vigore ? `<span class="tag tag-accent">In vigore dal ${esc(M.vigore)}</span>` : '';
-  if (suppInVista) html += '<span class="small m62" style="display:block;margin-top:6px">Bordo tratteggiato: supplenza a tuo carico.</span>';
+  const leg = [suppInVista && 'Bordo tratteggiato: supplenza a tuo carico.', verInVista && 'Bordo spesso: tua verifica in agenda ClasseViva.'].filter(Boolean);
+  if (leg.length) html += `<span class="small m62" style="display:block;margin-top:6px">${leg.join(' ')}</span>`;
   return sec('orario', c, head('orario', c, 'Orario · prossimi giorni', tag) + `<div class="ox">${html}</div>
     <div class="col" style="gap:6px;font-size:13px"><span class="kicker">Promemoria firma a fine ora</span><span style="white-space:pre-wrap">${esc(prom)}</span></div>` + cmdFooter('orario', false));
 }

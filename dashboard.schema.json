@@ -206,6 +206,96 @@
         }
       }
     },
+    "agenda": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Agenda ClasseViva delle classi del docente (agenda.json su Drive, scritto ogni sabato dal task Claude in Chrome): solo le verifiche da oggi inserite dal docente. Vanno in scadenze e nelle celle dell'orario",
+      "properties": {
+        "aggiornato": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "dal": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "al": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "eventi": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "classe",
+              "data",
+              "ore"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "classe": {
+                "type": "string"
+              },
+              "data": {
+                "type": "string",
+                "format": "date"
+              },
+              "inizio": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "HH:MM"
+              },
+              "fine": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "giornata": {
+                "type": "boolean",
+                "description": "evento di tutto il giorno"
+              },
+              "autore": {
+                "type": "string"
+              },
+              "testo": {
+                "type": "string"
+              },
+              "mio": {
+                "type": "boolean",
+                "description": "inserito dal docente"
+              },
+              "verifica": {
+                "type": "boolean"
+              },
+              "ore": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "description": "ore del docente in quella classe toccate dall'evento"
+              }
+            }
+          }
+        }
+      }
+    },
     "classi": {
       "type": "object",
       "description": "Chiave = classe (4B, 4C, 5B, 5I). Campi come CLASSI nel prototipo",

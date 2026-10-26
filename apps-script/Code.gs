@@ -9,6 +9,8 @@
  * Firme del giorno (F_aaaa-mm-gg), storico delle firme copiate per classe (S_classe), report lezioni
  * (R_data, RC_data_classe) e circolari nascoste (H_CIRC) sono in Script Properties.
  * Supplenze: file supplenze.json su Drive e quelle trovate nei PDF delle variazioni trascinati nell'app (SUP).
+ * Agenda ClasseViva: agenda.json su Drive, scritto ogni sabato dal task Claude in Chrome (le due settimane successive);
+ * solo le verifiche inserite dal docente: vanno in Scadenze e nelle celle dell'orario delle ore coinvolte.
  * Documenti trascinati nell'app (circolari, variazioni, moduli): caricati sulla Files API di Claude, analizzati con le regole
  * della skill gestione-circolari-ciusa (DJ_id, indice DOCS); i documenti richiesti dalle circolari vengono compilati
  * con le Agent Skills (docx/xlsx/pdf) e si scaricano dall'app.
@@ -91,8 +93,9 @@ function aggiorna() {
     const cr = statoClassroom_();
     fonti.classroom = cr.fonte;
     const cal = run('calendar', leggiCalendario_, { scadenze: [], orientamento: [] });
-    fonti.classeviva = { ok: false, errore: 'solo notifiche email (fase 2)', letti: 0 };
     const extra = run('drive', leggiDatiDrive_, {}); // firme.json, classi.json, orario.json prodotti dalle skill Claude
+    const agenda = agendaSnap_(extra.agenda, extra.orario);
+    fonti.classeviva = statoAgenda_(agenda);
     CacheService.getScriptCache().put('extra', JSON.stringify({ classi: extra.classi || {}, firme: extra.firme || {}, supplenze: extra.supplenze || [] }), CACHE_TTL);
     puliziaReport_();
     fonti.posta_scuola = statoPostaScuola_();
@@ -102,8 +105,9 @@ function aggiorna() {
     const snap = {
       meta: { aggiornato: new Date().toISOString(), fonti },
       circolari: filtraCircolari_(posta.circolari),
-      scadenze: filtraCircolari_([...posta.scadenze, ...cal.scadenze, ...scadenzeDoc_(), ...postaScuola_(), ...scadenzeSalvate_().filter(x => !posta.scadenze.some(y => y.t === x.t && y.d === x.d))]).sort((a, b) => (a.d || '9999').localeCompare(b.d || '9999')),
+      scadenze: filtraCircolari_([...posta.scadenze, ...cal.scadenze, ...scadenzeDoc_(), ...postaScuola_(), ...scadenzeAgenda_(agenda), ...scadenzeSalvate_().filter(x => !posta.scadenze.some(y => y.t === x.t && y.d === x.d))]).sort((a, b) => (a.d || '9999').localeCompare(b.d || '9999')),
       supplenze: { ore: unisciSupplenze_(extra.supplenze) },
+      agenda,
       documenti: documentiSnap_(),
       report: reportSnap_(),
       ricondizionamento: posta.ricondizionamento,
@@ -292,13 +296,45 @@ function leggiDatiDrive_() {
   const sub = it.next().getFoldersByName('dati');
   if (!sub.hasNext()) return out;
   const dir = sub.next();
-  ['firme', 'classi', 'orario', 'supplenze'].forEach(n => {
-    const f = dir.getFilesByName(n + '.json');
-    if (!f.hasNext()) return;
-    try { out[n] = JSON.parse(f.next().getBlob().getDataAsString()); out.letti++; }
+  ['firme', 'classi', 'orario', 'supplenze', 'agenda'].forEach(n => {
+    const it = dir.getFilesByName(n + '.json'), fs = [];
+    while (it.hasNext()) fs.push(it.next());
+    if (!fs.length) return;
+    // il task del sabato crea un agenda.json nuovo e cestina il vecchio (il connettore Drive non sovrascrive): se ne restano due, vale il più recente
+    fs.sort((a, b) => b.getLastUpdated() - a.getLastUpdated());
+    try { out[n] = JSON.parse(fs[0].getBlob().getDataAsString()); out.letti++; }
     catch (e) { throw new Error(n + '.json non è JSON valido: ' + e.message); }
   });
   return out;
+}
+
+/* ---------- agenda ClasseViva (agenda.json) ---------- */
+// Tiene solo le verifiche da oggi in poi inserite dal docente. ore = sue ore della classe toccate dalla verifica.
+const VERIFICA = /verific|compit|prova|interrog|simulazion|scritto di/i;
+function agendaSnap_(ag, orario) {
+  if (!ag || !Array.isArray(ag.eventi)) return null;
+  const ore = (orario && orario.ore) || [], sett = (orario && orario.settimana) || {};
+  const min = t => { const m = /^(\d{1,2}):(\d{2})/.exec(t || ''); return m ? m[1] * 60 + Number(m[2]) : null; };
+  const oggi = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  const eventi = ag.eventi.filter(e => e && /^\d{4}-\d{2}-\d{2}$/.test(e.data) && e.data >= oggi).map(e => {
+    const g = sett[new Date(e.data + 'T12:00:00').getDay()] || {}, s = min(e.inizio), f = min(e.fine);
+    const mie = ore.filter(h => g[h.n] === e.classe && (e.giornata || s === null || (s < min(h.e) && (f === null ? s + 1 : f) > min(h.s)))).map(h => h.n);
+    return Object.assign({}, e, { mio: /caprini/i.test(e.autore || ''), ore: mie, verifica: VERIFICA.test(e.testo || '') });
+  }).filter(e => e.mio && e.verifica).sort((a, b) => (a.data + (a.inizio || '')).localeCompare(b.data + (b.inizio || '')));
+  return { aggiornato: ag.aggiornato || null, dal: ag.dal || null, al: ag.al || null, eventi };
+}
+function statoAgenda_(a) {
+  if (!a) return { ok: false, errore: 'agenda.json non ancora su Drive (task del sabato)', letti: 0 };
+  const vecchia = a.aggiornato && Date.now() - new Date(a.aggiornato) > 8 * 864e5;
+  return { ok: !vecchia, errore: vecchia ? 'agenda ferma al ' + Utilities.formatDate(new Date(a.aggiornato), TZ, 'dd/MM') : null, letti: a.eventi.length };
+}
+function scadenzeAgenda_(a) {
+  return ((a && a.eventi) || []).map(e => {
+    const testo = String(e.testo || '').replace(/\s+/g, ' ').trim(), breve = testo.length > 140 ? testo.slice(0, 137).replace(/\s\S*$/, '') + '…' : testo;
+    const quando = e.giornata ? 'tutto il giorno' : (e.inizio || '') + (e.fine ? '–' + e.fine : '');
+    const tue = e.ore.length ? ' · ' + e.ore.map(n => n + 'ª').join(', ') + (e.ore.length > 1 ? ' ore tue' : ' ora tua') : '';
+    return { id: 'ag-' + (e.id || e.data + e.classe + e.inizio), ag: true, t: e.classe + ' · ' + breve, d: e.data, src: 'Agenda ClasseViva · ' + quando + tue };
+  });
 }
 
 /* ---------- firme ---------- */
