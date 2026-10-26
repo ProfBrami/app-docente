@@ -16,9 +16,10 @@
 const CORSI = { '5I': '712801710784', '5B': '552091893632', '4B': '806304898653', '4C': '801501598554' }; // ID dei corsi Classroom
 // Archivio degli esercizi degli anni precedenti (dalla skill prepara-lezioni): quarte → 5I "C++ (Classe Quarta)"; quinte → vecchia 5B "LINGUAGGIO SQL".
 const ARCHIVIO = {
-  quarte: { corso: '712801710784', topic: '814342467308', nota: '5I · C++ (Classe Quarta)' },
-  quinte: { corso: '546864434898', topic: '717560957883', nota: 'vecchia 5B · LINGUAGGIO SQL' }
+  quarte: { corso: '712801710784', topic: '814342467308', nota: '5I · C++ (Classe Quarta)', ext: /\.(cpp|c|h)$/i },
+  quinte: { corso: '546864434898', topic: '717560957883', nota: 'vecchia 5B · LINGUAGGIO SQL', ext: /\.sql$/i }
 };
+const ESEMPI_MAX = 4; // soluzioni del docente passate a Claude come esempi di stile
 const REPORT_ORA_MIN = 18 * 60;  // se non tutte le firme risultano firmate, il report parte comunque alle 18:00
 const CONTROLLO_ORA_MIN = 20 * 60; // alle 20:00 si ricontrollano gli stream
 const TZ = 'Europe/Rome';
@@ -36,7 +37,7 @@ function verifica() {
   const snap = backendGet_();
   Logger.log('Backend raggiungibile · orario: ' + (snap.orario ? 'presente' : 'MANCANTE'));
   Logger.log('Invio stato classi: ' + JSON.stringify(inviaStato()));
-  Object.keys(ARCHIVIO).forEach(t => { try { Logger.log('Archivio %s (%s): %s esercizi', t, ARCHIVIO[t].nota, archivio_(ARCHIVIO[t], mioId_()).length); } catch (e) { Logger.log('Archivio %s → ERRORE: %s', t, e.message); } });
+  Object.keys(ARCHIVIO).forEach(t => { try { const a = archivio_(ARCHIVIO[t], mioId_()), es = esempiStile_(a); Logger.log('Archivio %s (%s): %s esercizi, %s soluzioni, esempi di stile letti: %s', t, ARCHIVIO[t].nota, a.length, a.soluzioni.length, es.map(x => x.nome).join(', ') || 'nessuno'); } catch (e) { Logger.log('Archivio %s → ERRORE: %s', t, e.message); } });
   try { Logger.log('Posta della scuola: %s mail negli ultimi 2 giorni', GmailApp.search(QUERY_POSTA + ' newer_than:2d', 0, 50).length); Logger.log('Invio posta: ' + JSON.stringify(postaScuola())); }
   catch (e) { Logger.log('Posta della scuola → ERRORE: %s', e.message); }
 }
@@ -114,14 +115,14 @@ function prossimoGiorno_(o, d) {
 }
 // Per ogni classe del giorno: ultimi contenuti dello stream del docente + archivio esercizi. L'hash dello stream serve al controllo delle 20.
 function contesto_(o, target) {
-  const me = mioId_(), visti = [], classi = [], archivi = {};
+  const me = mioId_(), visti = [], classi = [], archivi = {}, esempi = {};
   blocchi_(o, target).forEach(b => {
     const gia = classi.find(c => c.classe === b.cls); if (gia) { gia.ore = gia.ore.concat(b.ore); return; }
     const recenti = stream_(CORSI[b.cls], me, 15);
     recenti.forEach(x => visti.push(b.cls + x.id + x.agg));
     const tipo = b.cls.charAt(0) === '4' ? 'quarte' : 'quinte';
-    if (!archivi[tipo]) { try { archivi[tipo] = archivio_(ARCHIVIO[tipo], me); } catch (e) { archivi[tipo] = []; } }
-    classi.push({ classe: b.cls, ore: b.ore.slice(), lab: b.lab, recenti: recenti.map(x => { const y = Object.assign({}, x); delete y.id; delete y.agg; return y; }), archivio: archivi[tipo], noteArchivio: ARCHIVIO[tipo].nota });
+    if (!archivi[tipo]) { try { archivi[tipo] = archivio_(ARCHIVIO[tipo], me); } catch (e) { archivi[tipo] = []; } esempi[tipo] = esempiStile_(archivi[tipo]); }
+    classi.push({ classe: b.cls, ore: b.ore.slice(), lab: b.lab, recenti: recenti.map(x => { const y = Object.assign({}, x); delete y.id; delete y.agg; return y; }), archivio: archivi[tipo], noteArchivio: ARCHIVIO[tipo].nota, esempi: esempi[tipo] });
   });
   const hash = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, visti.sort().join('|')).map(x => ((x + 256) % 256).toString(16).padStart(2, '0')).join('');
   return { hash, classi };
@@ -143,14 +144,31 @@ function stream_(id, me, n) {
   return out.sort((a, b) => b.agg.localeCompare(a.agg)).slice(0, n);
 }
 function archivio_(a, me) {
-  const out = []; let tok;
+  const out = [], sol = []; let tok;
   do {
     const r = Classroom.Courses.CourseWork.list(a.corso, { pageSize: 100, pageToken: tok });
-    (r.courseWork || []).filter(x => x.topicId === a.topic && x.creatorUserId === me).forEach(x => out.push({
-      titolo: x.title || '', testo: String(x.description || '').slice(0, 700), creato: Utilities.formatDate(new Date(x.creationTime), TZ, 'dd/MM/yyyy'), allegati: allegati_(x) }));
+    (r.courseWork || []).filter(x => x.topicId === a.topic && x.creatorUserId === me).forEach(x => {
+      out.push({ titolo: x.title || '', testo: String(x.description || '').slice(0, 700), creato: Utilities.formatDate(new Date(x.creationTime), TZ, 'dd/MM/yyyy'), allegati: allegati_(x) });
+      (x.materials || []).forEach(m => { const f = m.driveFile && m.driveFile.driveFile; if (f && f.id && a.ext.test(f.title || '')) sol.push({ id: f.id, nome: f.title, esercizio: x.title || '', t: x.creationTime }); });
+    });
     tok = r.nextPageToken;
   } while (tok && out.length < 80);
-  return out.sort((p, q) => p.creato.split('/').reverse().join('').localeCompare(q.creato.split('/').reverse().join('')));
+  out.sort((p, q) => p.creato.split('/').reverse().join('').localeCompare(q.creato.split('/').reverse().join('')));
+  out.soluzioni = sol.sort((p, q) => q.t.localeCompare(p.t)); // non va nel JSON: serve a esempiStile_
+  return out;
+}
+// Esempi di stile per le soluzioni scritte da Claude nel report: le soluzioni più recenti del docente nell'archivio
+// (.cpp per le quarte, .sql per le quinte), lette da Drive. Senza autorizzazione Drive il report parte senza esempi.
+function esempiStile_(arch) {
+  const out = []; let tot = 0;
+  for (const f of (arch.soluzioni || [])) {
+    if (out.length >= ESEMPI_MAX || tot > 12000) break;
+    try {
+      const t = DriveApp.getFileById(f.id).getBlob().getDataAsString().replace(/\r\n/g, '\n').slice(0, 4000);
+      if (t.trim()) { out.push({ nome: f.nome, esercizio: f.esercizio, contenuto: t }); tot += t.length; }
+    } catch (e) { Logger.log('Esempio di stile %s non leggibile: %s', f.nome, e.message); }
+  }
+  return out;
 }
 
 /* Stato sintetico delle classi per la sezione "Stato classi". */
