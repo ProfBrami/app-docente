@@ -213,3 +213,15 @@ textarea.note{min-height:150px;resize:vertical;font-size:14px;line-height:1.5}
 .drop.on{border-color:var(--color-accent);background:var(--color-accent-100);color:var(--color-accent-800)}
 .job{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-top:1px solid var(--color-divider)}
 .job .circ.li{padding:8px 0 4px;border-top:1px dashed var(--color-divider)}
+
+/* — pagina Spesa Claude — */
+.sp-big{font-family:var(--font-heading);font-weight:600;font-size:40px;line-height:1;font-variant-numeric:tabular-nums}
+.sp-t{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+.sp-t th,.sp-t td{text-align:left;padding:8px 10px 8px 0;border-top:1px solid var(--color-divider);vertical-align:top}
+.sp-t thead th{border-top:0;font-size:10px;font-weight:400;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent-700)}
+.sp-t tbody th{font-weight:500}
+.sp-t th span,.sp-t td span{display:block}
+.sp-l li{display:grid;grid-template-columns:76px 80px 1fr;gap:8px;align-items:baseline;padding:6px 0;border-top:1px solid var(--color-divider);font-variant-numeric:tabular-nums}
+.sp-l li:first-child{border-top:0}
+.sp-r{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px}
+@media (max-width:520px){.sp-l li{grid-template-columns:70px 1fr}.sp-l li .small{grid-column:1 / -1}}

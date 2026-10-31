@@ -43,7 +43,7 @@ const CLASSEVIVA_BACHECA = 'https://web.spaggiari.eu/sif/app/default/bacheca_per
 const CLASSEVIVA_COMANDO = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Apri ClasseViva');
 const daClasseviva = i => i.fonte === 'ClasseViva' || i.fonte === 'Segreteria Digitale';
 const claudeLink = t => `href="${(MAC ? 'claude://claude.ai/new?q=' : 'https://claude.ai/new?q=') + encodeURIComponent(t)}"${MAC ? '' : ' target="_blank" rel="noopener"'}`;
-const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda',nascoste:'pd_circ_nascoste',lette:'pd_circ_lette'};
+const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda',nascoste:'pd_circ_nascoste',lette:'pd_circ_lette',credito:'pd_credito'};
 
 const CORNERS = '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
 const ICON_ALERT = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>';
@@ -86,7 +86,8 @@ const S = {
   setup: false, setupErr: '', pin: null, copied: null,
   done: ls.json(K.done, {}), mod: ls.json(K.mod, {}), coda: ls.json(K.coda, []), nascoste: ls.json(K.nascoste, []), lette: ls.json(K.lette, []), ultimaFirmata: 0, invio: null, invioErr: '', trascina: false, tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
   utLab: LABS[0], utText: '',
-  variante: ls.get(K.variante, 'A'), tema: ls.get(K.tema, 'auto')
+  variante: ls.get(K.variante, 'A'), tema: ls.get(K.tema, 'auto'),
+  pagina: location.hash === '#spesa' ? 'spesa' : '', credito: ls.json(K.credito, null), crUsd: '', crData: ''
 };
 const collegato = () => S.mock || (ls.get(K.endpoint) && ls.get(K.token));
 
@@ -171,6 +172,7 @@ function render() {
 
   if (!collegato() || S.setup) root.innerHTML = renderSetup();
   else if (!S.data) root.innerHTML = renderAttesa();
+  else if (S.pagina === 'spesa') root.innerHTML = renderSpesa();
   else root.innerHTML = renderDashboard();
 
   if (focusId) { const el = document.getElementById(focusId); if (el) { el.focus({ preventScroll: true }); if (sel && el.setSelectionRange) try { el.setSelectionRange(sel[0], sel[1]); } catch (e) {} el.scrollTop = top; } }
@@ -233,6 +235,7 @@ function renderTop(now) {
         <span class="date-long">${GG[now.getDay()]} ${now.getDate()} ${MESI[now.getMonth()]} ${now.getFullYear()}</span>
       </div>
       <div class="row" style="align-items:flex-end;gap:10px">
+        ${S.data ? `<button class="btn btn-secondary" data-act="pagina" data-id="${S.pagina === 'spesa' ? '' : 'spesa'}" title="Quanto costa Claude: spesa per funzione e credito residuo">${S.pagina === 'spesa' ? 'Torna alla plancia' : 'Spesa Claude'}</button>` : ''}
         <button class="btn btn-secondary refresh${S.loading ? ' spin' : ''}" data-act="refresh" aria-label="Aggiorna i dati" title="Aggiorna (ricostruisce lo snapshot)" ${S.loading ? 'disabled' : ''}>${ICON_REFRESH}</button>
         <span class="clock">${hm(now)}</span>
       </div>
@@ -442,7 +445,7 @@ function secReport(x, c) {
     : (rep.inCorso ? 'IN PREPARAZIONE' : 'IN ATTESA') + ' · Giorno-obiettivo: ' + dataLunga;
   let inner = head('report', c, esc(titolo));
   inner += `<div class="rep-st${p ? ' ok' : ''}" role="status">${esc(stato)}</div>`;
-  if (!p) inner += alertBox(rep.inCorso ? '<strong>Report in preparazione.</strong> Compare qui entro pochi minuti.'
+  if (!p) inner += alertBox(rep.inCorso ? '<strong>Report in preparazione.</strong> Passa dalla Batch API di Claude (metà prezzo): compare qui di solito entro un\'ora.'
     : rep.mancano ? `<strong>Il report si prepara appena tutte le firme di oggi risultano firmate</strong> (ne mancano ${rep.mancano}); al più tardi alle 18:00. Sotto: classi e laboratori dall'orario.`
     : '<strong>Il report si prepara entro pochi minuti</strong> (oggi senza lezioni: alle 18:00).');
   // premessa: orario, campanelle e ore libere del giorno, poi come usare i file
@@ -650,6 +653,89 @@ function renderFoot() {
   </footer>`;
 }
 
+/* ---------- pagina Spesa Claude ---------- */
+// Stima dal backend: token di ogni chiamata ai prezzi di listino (spesa.voci del mese, spesa.giorni degli ultimi 62 giorni).
+// Il credito caricato si inserisce a mano e resta su questo dispositivo: l'API non espone il saldo.
+const VOCI_SPESA = [['firme', 'Firme registro'], ['report', 'Report lezioni'], ['posta', 'Posta della scuola'], ['circolari', 'Circolari e moduli'], ['altro', 'Altro']];
+const NOMI_MODELLI = { 'claude-opus-5-5': 'Opus 5.5', 'claude-sonnet-5-5': 'Sonnet 5.5', 'claude-haiku-5-5': 'Haiku 5.5' };
+const dollari = v => '$ ' + (v || 0).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: v && v < 1 ? 3 : 2 });
+const migliaia = n => n >= 1e6 ? (n / 1e6).toLocaleString('it-IT', { maximumFractionDigits: 1 }) + ' M' : n >= 1e3 ? Math.round(n / 1e3) + ' k' : String(n || 0);
+const totVoci = voci => Object.values(voci || {}).reduce((a, v) => a + (typeof v === 'number' ? v : v.usd || 0), 0);
+const meseLungo = m => m ? MESI[Number(m.slice(5, 7)) - 1] + ' ' + m.slice(0, 4) : '';
+const dmyIso = g => g.slice(8, 10) + '/' + g.slice(5, 7) + '/' + g.slice(0, 4);
+
+function renderSpesa() {
+  const sp = S.data.spesa, now = adesso(), oggi = iso(now);
+  const blocco = (titolo, kicker, html, largo) => `<section class="blueprint sec"${largo ? ' style="grid-column:1 / -1"' : ''}>${CORNERS}<header class="sec-h"><div><span class="kicker">${esc(kicker)}</span><h3>${titolo}</h3></div></header>${html}</section>`;
+  if (!sp) return `<div class="wrap">${renderTop(now)}<div class="blueprint state">${CORNERS}<h3>Spesa Claude</h3>${empty('Nessun dato di spesa dal backend', 'Incolla il nuovo Code.gs nell\'editor di Apps Script e pubblica una nuova versione del deployment: il conteggio parte dalla chiamata a Claude successiva.')}</div></div>`;
+  const giorni = sp.giorni || {}, totMese = totVoci(sp.voci), totPrec = totVoci(sp.mesePrec && sp.mesePrec.voci);
+  // media giornaliera degli ultimi 14 giorni contati (dal primo giorno di conteggio)
+  const ultimi = Array.from({ length: 14 }, (_, i) => iso(addDays(now, -i))).filter(g => !sp.dal || g >= sp.dal);
+  const media = ultimi.length ? ultimi.reduce((a, g) => a + totVoci(giorni[g]), 0) / ultimi.length : 0;
+
+  let html = '';
+  const mese = `<div class="sp-big">${dollari(totMese)}</div>
+    <span class="small m62">${esc(meseLungo(sp.mese))} · ${totPrec ? esc(meseLungo(sp.mesePrec.mese)) + ': ' + dollari(totPrec) + ' · ' : ''}media ${dollari(media)} al giorno${sp.dal ? ' · conteggio dal ' + dmyIso(sp.dal) : ''}</span>
+    <span class="small m62">Stima: token di ogni chiamata ai prezzi di listino di Anthropic (il report via Batch API a metà prezzo). Non comprende il tempo di esecuzione del codice per i moduli delle circolari. Il saldo reale è sulla <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener">Console di Anthropic</a>.</span>`;
+  html += blocco('Spesa di questo mese', 'Spesa Claude · 01', mese);
+
+  // credito: caricato a mano, residuo = credito − spesa dal giorno della ricarica
+  const cr = S.credito, spesoDal = cr ? Object.keys(giorni).filter(g => g >= cr.data).reduce((a, g) => a + totVoci(giorni[g]), 0) : 0;
+  const residuo = cr ? cr.usd - spesoDal : 0, durata = cr && media > 0 ? Math.floor(residuo / media) : null;
+  let credito = cr
+    ? `<div class="sp-big"${residuo < 5 ? ' style="color:var(--color-accent-700)"' : ''}>${dollari(Math.max(residuo, 0))}</div>
+       <span class="small m62">Residuo stimato: ${dollari(cr.usd)} caricati il ${dmyIso(cr.data)}, spesi ${dollari(spesoDal)} da allora.</span>
+       <span style="font-size:14px">${durata === null ? 'Durata non ancora stimabile: serve qualche giorno di conteggio.' : residuo <= 0 ? '<strong>Credito probabilmente esaurito:</strong> firme e report si fermano finché non ricarichi.' : `Al ritmo attuale dura circa <strong>${durata} giorni</strong> (fino al ${dmy(addDays(now, durata))}).`}</span>`
+      + (residuo < 5 && residuo > 0 ? alertBox('<strong>Credito quasi finito.</strong> Ricarica o attiva la ricarica automatica sulla Console di Anthropic.') : '')
+    : '<p class="m62" style="margin:0;font-size:14px">Inserisci il credito che hai caricato e la data della ricarica: l\'app stima quanto resta e quanti giorni dura.</p>';
+  credito += `<div class="row" style="align-items:flex-end">
+      <div class="field" style="flex:1 1 120px"><label for="cr-usd">Credito caricato ($)</label><input class="input" id="cr-usd" type="number" min="0" step="1" inputmode="decimal" value="${esc(S.crUsd || (cr ? cr.usd : ''))}"></div>
+      <div class="field" style="flex:1 1 150px"><label for="cr-data">Data della ricarica</label><input class="input" id="cr-data" type="date" max="${oggi}" value="${esc(S.crData || (cr ? cr.data : oggi))}"></div>
+      <button class="btn btn-primary" data-act="credito">Salva</button>
+    </div>
+    <a class="small" href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener">Ricarica o attiva la ricarica automatica sulla Console di Anthropic</a>`;
+  html += blocco('Credito', 'Spesa Claude · 02', credito);
+
+  // per funzione
+  const voci = VOCI_SPESA.filter(([k]) => (sp.voci || {})[k] || (sp.modelli || {})[k]);
+  const righe = voci.map(([k, nome]) => {
+    const v = (sp.voci || {})[k] || {}, mod = (sp.modelli || {})[k] || v.modello || '';
+    const quota = totMese ? Math.round((v.usd || 0) / totMese * 100) : 0;
+    return `<tr><th scope="row">${esc(nome)}<span class="small m60">${esc(NOMI_MODELLI[mod] || mod)}${k === 'report' ? ' · Batch API' : ''}</span></th>
+      <td>${v.n || 0}</td><td>${migliaia(v.in || 0)} / ${migliaia(v.out || 0)}${v.cr ? '<span class="small m60">cache ' + migliaia(v.cr) + '</span>' : ''}</td><td><b>${dollari(v.usd || 0)}</b><span class="small m60">${quota}%</span></td></tr>`;
+  }).join('');
+  html += blocco('Per funzione', 'Spesa Claude · 03 · ' + meseLungo(sp.mese), `<div class="ox"><table class="sp-t"><thead><tr><th scope="col">Funzione</th><th scope="col">Chiamate</th><th scope="col">Token in / out</th><th scope="col">Spesa</th></tr></thead><tbody>${righe}</tbody></table></div>`, true);
+
+  // ultimi 14 giorni
+  const lista = Array.from({ length: 14 }, (_, i) => iso(addDays(now, -i))).filter(g => giorni[g]).map(g => {
+    const d = new Date(g + 'T12:00:00'), parti = VOCI_SPESA.filter(([k]) => giorni[g][k]).map(([k, nome]) => nome.split(' ')[0] + ' ' + dollari(giorni[g][k]));
+    return `<li><span class="sp-g">${G3[d.getDay()]} ${dmy(d)}</span><b>${dollari(totVoci(giorni[g]))}</b><span class="small m62">${esc(parti.join(' · '))}</span></li>`;
+  }).join('');
+  html += blocco('Ultimi 14 giorni', 'Spesa Claude · 04', lista ? `<ul class="plain sp-l">${lista}</ul>` : empty('Nessuna chiamata a Claude negli ultimi 14 giorni.'));
+
+  // come si risparmia
+  const m = sp.modelli || {};
+  html += blocco('Risparmi attivi', 'Spesa Claude · 05', `<ul class="sp-r">
+    <li><b>Report lezioni</b> con ${esc(NOMI_MODELLI[m.report] || m.report || 'Opus')} tramite la Batch API: metà prezzo, arriva entro circa un'ora.</li>
+    <li><b>Controllo delle 20</b>: si rigenerano solo le classi il cui Classroom è cambiato, non tutto il report.</li>
+    <li><b>Firme</b> con ${esc(NOMI_MODELLI[m.firme] || m.firme || '')}: metà prezzo di Opus.</li>
+    <li><b>Posta della scuola</b> con ${esc(NOMI_MODELLI[m.posta] || m.posta || '')}: circa 40 volte più economico di Opus.</li>
+    <li><b>Circolari e moduli</b> restano su ${esc(NOMI_MODELLI[m.circolari] || m.circolari || 'Opus')}: partono solo quando trascini un documento.</li></ul>`);
+
+  return `<div class="wrap">${renderTop(now)}<main class="grid">${html}</main></div>`;
+}
+function salvaCredito() {
+  const usd = Number(String(S.crUsd || (document.getElementById('cr-usd') || {}).value || '').replace(',', '.'));
+  const data = S.crData || (document.getElementById('cr-data') || {}).value || iso(adesso());
+  if (!(usd > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(data)) { const el = document.getElementById('cr-usd'); if (el) el.focus(); return; }
+  S.credito = { usd, data }; ls.set(K.credito, S.credito); S.crUsd = ''; S.crData = ''; render();
+}
+function vaiPagina(p) {
+  if (p) location.hash = p; else history.pushState(null, '', location.pathname + location.search);
+  S.pagina = p; scrollTo(0, 0); render();
+}
+['hashchange', 'popstate'].forEach(ev => addEventListener(ev, () => { S.pagina = location.hash === '#spesa' ? 'spesa' : ''; render(); }));
+
 /* ---------- firme: modifica, copia, invio al backend ---------- */
 // Una firma può arrivare come testo (firme.json delle skill) o come oggetto generato dal backend.
 const firmaRec = v => typeof v === 'string' ? { testo: v } : (v && typeof v === 'object' ? v : {});
@@ -685,9 +771,9 @@ async function svuotaCoda() {
   S.coda = resto; ls.set(K.coda, resto); svuotaCoda._in = false; render();
 }
 // Dopo l'orario di pronto di ogni bozza ricarica i dati a +1, +3, +6 e +10 minuti finché non arriva.
-// Dopo l'ultima firma segnata, ricarica ogni 2 minuti (per 30 minuti) finché il report non è pronto.
+// Dopo l'ultima firma segnata, ricarica ogni 2 minuti (per 90 minuti: il report passa dalla Batch API) finché il report non è pronto.
 function reportInArrivo() {
-  if (!S.data || !S.ultimaFirmata || Date.now() - S.ultimaFirmata > 30 * 60e3 || Date.now() - S.lastFetch < 2 * 60e3) return false;
+  if (!S.data || !S.ultimaFirmata || Date.now() - S.ultimaFirmata > 90 * 60e3 || Date.now() - S.lastFetch < 2 * 60e3) return false;
   const now = new Date(), today = new Date(now); today.setHours(12, 0, 0, 0);
   const r = reportStato(S.data, modello(S.data), today, now.getHours() * 60 + now.getMinutes());
   return !r.pronto && !r.mancano;
@@ -794,6 +880,8 @@ document.addEventListener('click', e => {
   const a = el.dataset.act, id = el.dataset.id;
   if (a === 'copy') copia(el.dataset.key);
   else if (a === 'refresh') carica(true);
+  else if (a === 'pagina') vaiPagina(id);
+  else if (a === 'credito') salvaCredito();
   else if (a === 'copyfirma') copiaFirma(el);
   else if (a === 'scegli') { const f = document.getElementById('doc-file'); if (f) f.click(); }
   else if (a === 'ics') scaricaIcs(el.dataset.job, Number(el.dataset.c), Number(el.dataset.p));
@@ -840,6 +928,8 @@ document.addEventListener('input', e => {
   if (t.id === 'note') { S.note = t.value; ls.set(K.note, t.value); }
   else if (t.id && t.id.startsWith('fx-')) { S.mod[t.id.slice(3)] = t.value; ls.set(K.mod, S.mod); }
   else if (t.id === 'ut-text') S.utText = t.value;
+  else if (t.id === 'cr-usd') S.crUsd = t.value;
+  else if (t.id === 'cr-data') S.crData = t.value;
 });
 document.addEventListener('change', e => {
   const t = e.target;

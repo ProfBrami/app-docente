@@ -4,7 +4,8 @@
  * - Ogni 15 minuti invia al backend personale lo stato delle classi (ultimo contenuto, esercitazione aperta).
  * - Ogni 5 minuti controlla se tutte le firme di oggi sono segnate come firmate (o se sono le 18): allora invia il
  *   contesto delle classi del prossimo giorno di scuola e il backend compila il Report lezioni. Alle 20 ricontrolla
- *   gli stream e, se qualcosa è cambiato, lo fa rigenerare.
+ *   gli stream e fa rigenerare solo le classi il cui stream è cambiato. Le classi finite in errore vengono richieste di nuovo
+ *   (al più RIPROVE_MAX volte per giorno di report).
  * - Ogni mattina alle 6 programma un'esecuzione 5 minuti dopo la fine di ogni blocco di ore (orario dal backend);
  *   a quell'ora raccoglie i contenuti dello stream creati o modificati dal docente dalla lezione precedente della
  *   classe e li invia al backend, che genera la firma con Claude.
@@ -22,6 +23,7 @@ const ARCHIVIO = {
 const ESEMPI_MAX = 4; // soluzioni del docente passate a Claude come esempi di stile
 const REPORT_ORA_MIN = 18 * 60;  // se non tutte le firme risultano firmate, il report parte comunque alle 18:00
 const CONTROLLO_ORA_MIN = 20 * 60; // alle 20:00 si ricontrollano gli stream
+const RIPROVE_MAX = 2; // nuovi tentativi per le classi del report finite in errore
 const TZ = 'Europe/Rome';
 const PRONTA_MIN = 5;
 const P_ = () => PropertiesService.getScriptProperties();
@@ -96,36 +98,45 @@ function controllaReport() {
   const firme = (snap.firme || {})[oggi] || {}, bl = blocchi_(o, adesso);
   const tutteFirmate = bl.length > 0 && bl.every(b => firme[String(b.first)] && firme[String(b.first)].firmata);
   if (rep && rep.inCorso && !rep.generato) return; // generazione già in corso sul backend
+  const inErrore = rep && !rep.inCorso ? Object.keys(rep.classi || {}).filter(k => rep.classi[k] && rep.classi[k].errore) : [];
+  const riprove = Number(P_().getProperty('RIPROVE_' + dataT) || 0);
   if (!rep) {
     if (tutteFirmate || min >= REPORT_ORA_MIN) inviaReport_(o, target, 'nuovo');
+  } else if (inErrore.length && riprove < RIPROVE_MAX) {
+    P_().setProperty('RIPROVE_' + dataT, String(riprove + 1));
+    const ctx = contesto_(o, target);
+    inviaReport_(o, target, 'riprova', { hash: rep.hash, hashClassi: rep.hashClassi, classi: ctx.classi.filter(k => inErrore.includes(k.classe)) });
   } else if (min >= CONTROLLO_ORA_MIN && !rep.controllo20 && !(rep.generato && new Date(rep.generato).getHours() * 60 + new Date(rep.generato).getMinutes() >= CONTROLLO_ORA_MIN)) {
     const ctx = contesto_(o, target);
-    if (ctx.hash !== rep.hash) inviaReport_(o, target, 'aggiornamento', ctx);
+    // solo le classi il cui stream è cambiato (i report fatti prima di hashClassi: tutte)
+    const cambiate = ctx.hash === rep.hash ? [] : ctx.classi.filter(k => !rep.hashClassi || ctx.hashClassi[k.classe] !== rep.hashClassi[k.classe]);
+    if (cambiate.length) inviaReport_(o, target, 'aggiornamento', { hash: ctx.hash, hashClassi: ctx.hashClassi, classi: cambiate });
     else backendPost_({ azione: 'report_verificato', data: dataT });
   }
 }
 function inviaReport_(o, target, tipo, ctx) {
   ctx = ctx || contesto_(o, target);
-  const r = backendPost_({ azione: 'report', data: iso_(target), tipo, hash: ctx.hash, classi: ctx.classi });
+  const r = backendPost_({ azione: 'report', data: iso_(target), tipo, hash: ctx.hash, hashClassi: ctx.hashClassi, classi: ctx.classi });
   Logger.log('Report %s per %s: %s', tipo, iso_(target), JSON.stringify(r));
 }
 function prossimoGiorno_(o, d) {
   for (let i = 1; i <= 10; i++) { const x = new Date(d.getTime() + i * 864e5); if (blocchi_(o, x).length) return x; }
   return null;
 }
-// Per ogni classe del giorno: ultimi contenuti dello stream del docente + archivio esercizi. L'hash dello stream serve al controllo delle 20.
+// Per ogni classe del giorno: ultimi contenuti dello stream del docente + archivio esercizi. Gli hash dello stream
+// (complessivo e per classe) servono al controllo delle 20.
+const md5_ = s => Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, s).map(x => ((x + 256) % 256).toString(16).padStart(2, '0')).join('');
 function contesto_(o, target) {
-  const me = mioId_(), visti = [], classi = [], archivi = {}, esempi = {};
+  const me = mioId_(), visti = [], classi = [], archivi = {}, esempi = {}, hashClassi = {};
   blocchi_(o, target).forEach(b => {
     const gia = classi.find(c => c.classe === b.cls); if (gia) { gia.ore = gia.ore.concat(b.ore); return; }
     const recenti = stream_(CORSI[b.cls], me, 15);
-    recenti.forEach(x => visti.push(b.cls + x.id + x.agg));
+    const vc = recenti.map(x => b.cls + x.id + x.agg); visti.push(...vc); hashClassi[b.cls] = md5_(vc.sort().join('|'));
     const tipo = b.cls.charAt(0) === '4' ? 'quarte' : 'quinte';
     if (!archivi[tipo]) { try { archivi[tipo] = archivio_(ARCHIVIO[tipo], me); } catch (e) { archivi[tipo] = []; } esempi[tipo] = esempiStile_(archivi[tipo]); }
     classi.push({ classe: b.cls, ore: b.ore.slice(), lab: b.lab, recenti: recenti.map(x => { const y = Object.assign({}, x); delete y.id; delete y.agg; return y; }), archivio: archivi[tipo], noteArchivio: ARCHIVIO[tipo].nota, esempi: esempi[tipo] });
   });
-  const hash = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, visti.sort().join('|')).map(x => ((x + 256) % 256).toString(16).padStart(2, '0')).join('');
-  return { hash, classi };
+  return { hash: md5_(visti.sort().join('|')), hashClassi, classi };
 }
 const allegati_ = x => (x.materials || []).map(m => {
   if (m.driveFile && m.driveFile.driveFile) return { titolo: m.driveFile.driveFile.title, url: m.driveFile.driveFile.alternateLink || '' };

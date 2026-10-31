@@ -14,6 +14,8 @@
  * Documenti trascinati nell'app (circolari, variazioni, moduli): caricati sulla Files API di Claude, analizzati con le regole
  * della skill gestione-circolari-ciusa (DJ_id, indice DOCS); i documenti richiesti dalle circolari vengono compilati
  * con le Agent Skills (docx/xlsx/pdf) e si scaricano dall'app.
+ * Spesa Claude: ogni chiamata somma token e costo stimato per funzione (SPESA_aaaa-mm, SPESA_G per giorno); l'app la mostra
+ * nella pagina «Spesa Claude». Il report passa dalla Batch API (metà prezzo, RB = batch in corso).
  */
 const SNAP_KEY = 'snapshot';
 const CACHE_TTL = 21600; // max consentito da CacheService
@@ -23,7 +25,9 @@ const PAROLE_MIE = ['caprini', 'arrakis', 'matrix', 'lab. 21', 'ufficio tecnico'
 const TZ = 'Europe/Rome';
 const G3 = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
 const GG = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
-const MODELLO = 'claude-opus-5-5';
+const MODELLO = 'claude-opus-5-5';        // report lezioni e circolari
+const MODELLO_FIRME = 'claude-sonnet-5-5'; // testo breve nello stile del docente: metà prezzo di Opus
+const MODELLO_POSTA = 'claude-haiku-5-5';  // smistamento delle mail della scuola: circa 40 volte più economico
 const CR_MAX_ETA = 45 * 60e3; // oltre, lo stato Classroom inviato dalla scuola è considerato vecchio
 const P_ = () => PropertiesService.getScriptProperties();
 
@@ -110,6 +114,7 @@ function aggiorna() {
       agenda,
       documenti: documentiSnap_(),
       report: reportSnap_(),
+      spesa: spesaSnap_(),
       ricondizionamento: posta.ricondizionamento,
       orientamento: cal.orientamento,
       classi: unisciClassi_(cr.classi, extra.classi),
@@ -244,7 +249,7 @@ function riceviPostaScuola_(b) {
   if (mail.length) {
     const user = mail.map(m => `<mail id="${String(m.id).replace(/"/g, '')}">\nDa: ${m.da}\nA: ${m.a}\nData: ${m.data}\nOggetto: ${m.oggetto}\nAllegati: ${(m.allegati || []).join(', ') || 'nessuno'}\n\n${m.testo}\n</mail>`).join('\n\n')
       + '\n\nOggi è ' + Utilities.formatDate(new Date(), TZ, 'dd/MM/yyyy') + '. Elenca solo le mail che chiedono un adempimento al docente.';
-    const j = JSON.parse(chiamaClaudeAvanzato_({ system: REGOLE_POSTA_SCUOLA, content: user, formato: { type: 'json_schema', schema: SCHEMA_POSTA }, effort: 'low' }).testo);
+    const j = JSON.parse(chiamaClaudeAvanzato_({ system: REGOLE_POSTA_SCUOLA, content: user, formato: { type: 'json_schema', schema: SCHEMA_POSTA }, effort: 'low', modello: MODELLO_POSTA, voce: 'posta' }).testo);
     const perId = {}; mail.forEach(m => { perId[m.id] = m; });
     trovati = (j.adempimenti || []).filter(a => perId[a.id] && a.cosa).map(a => {
       const m = perId[a.id], ricevuta = m.data.slice(0, 5);
@@ -401,6 +406,7 @@ function ritoccaSnap_() { // aggiorna firme e classi nello snapshot senza rilegg
   const ex = JSON.parse(CacheService.getScriptCache().get('extra') || '{}'), cr = statoClassroom_();
   snap.firme = firmeSnap_(ex.firme);
   snap.report = reportSnap_();
+  snap.spesa = spesaSnap_();
   snap.documenti = documentiSnap_();
   snap.supplenze = { ore: unisciSupplenze_(ex.supplenze) };
   snap.scadenze = filtraCircolari_([...(snap.scadenze || []).filter(x => !x.doc && !x.ps && !x.salvata), ...scadenzeDoc_(), ...postaScuola_(), ...scadenzeSalvate_().filter(x => !(snap.scadenze || []).some(y => !y.salvata && y.t === x.t && y.d === x.d))]).sort((a, b) => (a.d || '9999').localeCompare(b.d || '9999'));
@@ -479,11 +485,15 @@ function scadenzeSalvate_() {
 }
 
 /* ---------- report lezioni ---------- */
-// b: { data (giorno del report), tipo: 'nuovo'|'aggiornamento', hash, classi: [{ classe, ore[], lab, recenti[], archivio[], noteArchivio }] }
+// b: { data (giorno del report), tipo: 'nuovo'|'aggiornamento'|'riprova' (solo le classi finite in errore), hash, classi: [{ classe, ore[], lab, recenti[], archivio[], noteArchivio }] }
 // La generazione dura minuti: si salva la richiesta e la si elabora in un'esecuzione separata (trigger tra pochi secondi).
 function riceviReport_(b) {
   const c = CacheService.getScriptCache();
   if (c.get('RP') === b.data + '|' + (b.tipo || 'nuovo')) return { ok: true, giaInCorso: true };
+  if (!(b.classi || []).length) return { errore: 'nessuna classe nella richiesta' };
+  const rb = JSON.parse(P_().getProperty('RB') || 'null'); // un batch alla volta (scade comunque dopo 24 ore)
+  if (rb && Date.now() - new Date(rb.inviato).getTime() < 26 * 3600e3) return { ok: true, giaInCorso: true };
+  if (rb) P_().deleteProperty('RB');
   c.put('RP', b.data + '|' + (b.tipo || 'nuovo'), 900);
   const s = JSON.stringify(b), n = Math.ceil(s.length / 90000);
   for (let i = 0; i < n; i++) c.put('RQ_' + i, s.slice(i * 90000, (i + 1) * 90000), 3600);
@@ -493,21 +503,60 @@ function riceviReport_(b) {
   ritoccaSnap_();
   return { ok: true, inCoda: true };
 }
+// Batch API: metà prezzo, risultato di solito entro un'ora; controllaBatchReport lo cerca ogni 5 minuti.
+// Nei batch non c'è il fallback lato server sui rifiuti: una classe rifiutata finisce in errore e viene richiesta di nuovo.
 function elaboraReport() {
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'elaboraReport').forEach(t => ScriptApp.deleteTrigger(t));
   const c = CacheService.getScriptCache(), n = Number(c.get('RQ_n') || 0);
   if (!n) return;
   let s = ''; for (let i = 0; i < n; i++) s += c.get('RQ_' + i) || '';
   c.remove('RQ_n');
-  const b = JSON.parse(s), classi = {};
-  (b.classi || []).forEach(k => {
-    try { classi[k.classe] = generaReportClasse_(b.data, k); }
-    catch (err) { classi[k.classe] = { errore: String(err.message || err).slice(0, 200) }; }
-    salvaReportClasse_(b.data, k.classe, classi[k.classe]);
+  const b = JSON.parse(s), meta = { data: b.data, tipo: b.tipo || 'nuovo', hash: b.hash || '', hashClassi: b.hashClassi || null, classi: (b.classi || []).map(k => k.classe) };
+  try {
+    const j = anthropic_('post', '/v1/messages/batches', { requests: b.classi.map(k => ({ custom_id: k.classe, params: corpoClaude_(richiestaReport_(b.data, k), true) })) });
+    P_().setProperty('RB', JSON.stringify(Object.assign({ id: j.id, inviato: new Date().toISOString() }, meta)));
+    c.put('RP', b.data + '|' + meta.tipo, CACHE_TTL);
+    pianifica_('controllaBatchReport', 5 * 60e3);
+    ritoccaSnap_();
+  } catch (err) { // invio non riuscito: le classi finiscono in errore e lo script della scuola le richiede (RIPROVE_MAX)
+    const classi = {}; meta.classi.forEach(k => { classi[k] = { errore: String(err.message || err).slice(0, 200) }; });
+    chiudiReport_(meta, classi);
+  }
+}
+function controllaBatchReport() {
+  const rb = JSON.parse(P_().getProperty('RB') || 'null'); if (!rb) return;
+  let j;
+  try { j = anthropic_('get', '/v1/messages/batches/' + rb.id); }
+  catch (err) { pianifica_('controllaBatchReport', 5 * 60e3); return; } // errore temporaneo: si riprova
+  if (j.processing_status !== 'ended') { pianifica_('controllaBatchReport', 5 * 60e3); return; }
+  const r = UrlFetchApp.fetch(j.results_url, { muteHttpExceptions: true, headers: intestazioni_() });
+  if (r.getResponseCode() !== 200) { pianifica_('controllaBatchReport', 5 * 60e3); return; }
+  const classi = {};
+  r.getContentText().split('\n').filter(x => x.trim()).forEach(riga => {
+    const x = JSON.parse(riga), res = x.result || {};
+    if (res.type === 'succeeded') {
+      registraSpesa_('report', res.message.model, res.message.usage, true);
+      try { classi[x.custom_id] = reportDaRisposta_(res.message); }
+      catch (err) { classi[x.custom_id] = { errore: String(err.message || err).slice(0, 200) }; }
+    } else {
+      const e = res.error && (res.error.error || res.error);
+      classi[x.custom_id] = { errore: res.type === 'errored' ? 'Claude API: ' + String((e && e.message) || 'errore').slice(0, 180) : 'richiesta ' + res.type + ' nel batch' };
+    }
   });
-  const ora = new Date().toISOString();
-  P_().setProperty('R_' + b.data, JSON.stringify({ data: b.data, generato: ora, tipo: b.tipo || 'nuovo', hash: b.hash || '', controllo20: b.tipo === 'aggiornamento' ? ora : null, classi: Object.keys(classi) }));
-  c.remove('RP');
+  rb.classi.forEach(k => { if (!classi[k]) classi[k] = { errore: 'nessun risultato dal batch' }; });
+  P_().deleteProperty('RB');
+  chiudiReport_(rb, classi);
+}
+// 'riprova' e 'aggiornamento' delle 20 contengono solo alcune classi: le altre del report restano com'erano.
+function chiudiReport_(b, classi) {
+  Object.keys(classi).forEach(k => salvaReportClasse_(b.data, k, classi[k]));
+  const ora = new Date().toISOString(), prima = b.tipo !== 'nuovo' ? JSON.parse(P_().getProperty('R_' + b.data) || 'null') : null;
+  if (prima) {
+    Object.keys(classi).forEach(k => { if (prima.classi.indexOf(k) < 0) prima.classi.push(k); });
+    if (b.tipo === 'aggiornamento') { Object.assign(prima, { generato: ora, tipo: 'aggiornamento', hash: b.hash, hashClassi: b.hashClassi, controllo20: ora }); delete prima.nessunaModifica; }
+    P_().setProperty('R_' + b.data, JSON.stringify(prima));
+  } else P_().setProperty('R_' + b.data, JSON.stringify({ data: b.data, generato: ora, tipo: b.tipo, hash: b.hash, hashClassi: b.hashClassi, controllo20: b.tipo === 'aggiornamento' ? ora : null, classi: Object.keys(classi) }));
+  CacheService.getScriptCache().remove('RP');
   ritoccaSnap_();
 }
 function reportVerificato_(b) {
@@ -570,7 +619,7 @@ const SCHEMA_REPORT = {
         contenuto: { type: 'string', description: 'testo completo del file se prodotto da Claude; vuoto se già presente' } } } }
   }
 };
-function generaReportClasse_(data, k) {
+function richiestaReport_(data, k) {
   const d = new Date(data + 'T12:00:00');
   const prec = storico_(k.classe).slice(0, 8).map(x => `- ${x.data} ${x.ora}ª ora: ${x.finale}`).join('\n') || '(nessuna)';
   const user = `Classe ${k.classe} · lezione di ${GG[d.getDay()]} ${data.slice(8, 10)}/${data.slice(5, 7)} · ore ${(k.ore || []).join('ª, ')}ª` + (k.lab ? ` · ${k.lab}` : '') + `
@@ -592,8 +641,13 @@ ${(k.esempi || []).map(x => `--- ${x.nome} (${x.esercizio}) ---\n${x.contenuto}`
 </esempi_di_stile>
 
 Compila il report di questa classe per la lezione indicata.`;
-  const j = chiamaClaude_(REGOLE_REPORT, user, { type: 'json_schema', schema: SCHEMA_REPORT });
-  const r = JSON.parse(j);
+  // soluzioni e schemi scritti per intero, più il ragionamento: 16000 token non sempre bastano
+  return { system: REGOLE_REPORT, content: user, formato: { type: 'json_schema', schema: SCHEMA_REPORT }, maxTokens: 32000 };
+}
+function reportDaRisposta_(m) {
+  if (m.stop_reason === 'refusal') throw new Error('Claude ha rifiutato la richiesta');
+  if (m.stop_reason === 'max_tokens') throw new Error('risposta di Claude troncata (superato il limite di token)');
+  const r = JSON.parse((m.content || []).filter(c => c.type === 'text').map(c => c.text).join(''));
   (r.files || []).forEach(f => { if (f.contenuto && /\.(cpp|cc|c|h)$/i.test(f.n || '')) f.contenuto = stileCpp_(f.contenuto); });
   return r;
 }
@@ -709,7 +763,7 @@ function analizzaDocumenti_(job) {
     (job.nota ? `\nNota del docente: ${job.nota}` : '') +
     (codice ? `\nI file non PDF sono nel container: leggili con l'esecuzione di codice. Alla fine rispondi SOLO con un oggetto JSON conforme a questo schema:\n${JSON.stringify(SCHEMA_CIRC)}` : '\nCompila il risultato secondo lo schema.');
   const r = chiamaClaudeAvanzato_({ system: REGOLE_CIRCOLARI, content: [...blocchi, { type: 'text', text: testo }],
-    formato: codice ? null : { type: 'json_schema', schema: SCHEMA_CIRC }, codice, skills: codice ? ['docx', 'xlsx', 'pdf'] : null });
+    formato: codice ? null : { type: 'json_schema', schema: SCHEMA_CIRC }, codice, skills: codice ? ['docx', 'xlsx', 'pdf'] : null, voce: 'circolari' });
   return codice ? estraiJson_(r.testo) : JSON.parse(r.testo);
 }
 function estraiJson_(t) {
@@ -726,7 +780,7 @@ function produciDocumenti_(job) {
     `\nNon puoi fare domande: dove manca un dato indispensabile lascia il campo vuoto e annotalo. Salva i file finali nella cartella di output. ` +
     `Alla fine scrivi un riepilogo breve: cosa viene da fonte ufficiale, cosa è proposta tua, cosa è stima, campi lasciati vuoti.`;
   const r = chiamaClaudeAvanzato_({ system: REGOLE_CIRCOLARI + '\n\n' + REGOLE_MODULI, content: [...blocchi, { type: 'text', text: testo }],
-    codice: true, skills: ['docx', 'xlsx', 'pdf'], effort: 'high' });
+    codice: true, skills: ['docx', 'xlsx', 'pdf'], effort: 'high', voce: 'circolari' });
   const caricati = job.files.map(f => f.file_id);
   const documenti = r.fileIds.filter(id => !caricati.includes(id)).map(id => {
     const m = UrlFetchApp.fetch('https://api.anthropic.com/v1/files/' + id, { muteHttpExceptions: true, headers: { 'x-api-key': chiave_(), 'anthropic-version': '2023-06-01' } });
@@ -790,17 +844,19 @@ const SCHEMA_CIRC = {
 };
 
 /* ---------- generazione con Claude ---------- */
-function chiamaClaude_(system, user, formato) {
-  return chiamaClaudeAvanzato_({ system, content: user, formato }).testo;
-}
-// o: { system, content (testo o blocchi), formato, codice (esecuzione di codice), skills: ['docx', ...], effort }
+// o: { system, content (testo o blocchi), formato, codice (esecuzione di codice), skills: ['docx', ...], effort, maxTokens, modello, voce }
+// voce: firme | report | posta | circolari, per il conteggio della spesa.
 // Restituisce { testo, fileIds } — fileIds: file prodotti nel container (scaricabili dalla Files API).
-function chiamaClaudeAvanzato_(o) {
-  const beta = ['server-side-fallback-2026-07-01'];
-  const body = { model: MODELLO, max_tokens: 16000, fallbacks: 'default', output_config: { effort: o.effort || 'medium' },
+function corpoClaude_(o, inBatch) {
+  const body = { model: o.modello || MODELLO, max_tokens: o.maxTokens || 16000, output_config: { effort: o.effort || 'medium' },
     system: [{ type: 'text', text: o.system, cache_control: { type: 'ephemeral' } }],
     messages: [{ role: 'user', content: o.content }] };
+  if (!inBatch && !/haiku/.test(body.model)) body.fallbacks = 'default'; // fallback sui rifiuti: non c'è su Haiku né nei batch
   if (o.formato) body.output_config.format = o.formato;
+  return body;
+}
+function chiamaClaudeAvanzato_(o) {
+  const body = corpoClaude_(o), beta = body.fallbacks ? ['server-side-fallback-2026-07-01'] : [];
   if (o.codice) {
     beta.push('code-execution-2025-08-25');
     body.tools = [{ type: 'code_execution_20260521', name: 'code_execution' }];
@@ -810,12 +866,14 @@ function chiamaClaudeAvanzato_(o) {
   for (let giro = 0; giro < 6; giro++) {
     const r = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
       method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      headers: { 'x-api-key': chiave_(), 'anthropic-version': '2023-06-01', 'anthropic-beta': beta.join(',') },
+      headers: Object.assign(intestazioni_(), beta.length ? { 'anthropic-beta': beta.join(',') } : {}),
       payload: JSON.stringify(body)
     });
     j = JSON.parse(r.getContentText() || '{}');
     if (r.getResponseCode() !== 200) throw new Error('Claude API ' + r.getResponseCode() + ': ' + ((j.error && j.error.message) || '').slice(0, 200));
+    registraSpesa_(o.voce || 'altro', j.model || body.model, j.usage, false);
     if (j.stop_reason === 'refusal') throw new Error('Claude ha rifiutato la richiesta');
+    if (j.stop_reason === 'max_tokens') throw new Error('risposta di Claude troncata (superato il limite di ' + body.max_tokens + ' token)');
     testo += (j.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
     raccogliFileId_(j.content, fileIds);
     if (j.stop_reason !== 'pause_turn') break; // turno lungo con esecuzione di codice: si continua dallo stesso punto
@@ -828,6 +886,48 @@ function chiamaClaudeAvanzato_(o) {
 }
 function chiave_() {
   const k = P_().getProperty('ANTHROPIC_API_KEY'); if (!k) throw new Error('ANTHROPIC_API_KEY non impostata'); return k;
+}
+const intestazioni_ = () => ({ 'x-api-key': chiave_(), 'anthropic-version': '2023-06-01' });
+function anthropic_(metodo, percorso, corpo) { // Batch API
+  const r = UrlFetchApp.fetch('https://api.anthropic.com' + percorso, Object.assign({ method: metodo, muteHttpExceptions: true, headers: intestazioni_() },
+    corpo ? { contentType: 'application/json', payload: JSON.stringify(corpo) } : {}));
+  const j = JSON.parse(r.getContentText() || '{}');
+  if (r.getResponseCode() !== 200) throw new Error('Claude API ' + r.getResponseCode() + ': ' + ((j.error && j.error.message) || '').slice(0, 200));
+  return j;
+}
+
+/* ---------- spesa Claude: token e costo stimato per funzione ---------- */
+// $ per milione di token: input, output, lettura cache, scrittura cache (5 min). Nei batch tutto costa la metà.
+// Non comprende il tempo di esecuzione del codice (circolari con allegati da compilare).
+const PREZZI = {
+  'claude-opus-5-5': [4, 20, 0.2, 5], 'claude-sonnet-5-5': [2, 10, 0.2, 2.5], 'claude-haiku-5-5': [0.1, 0.5, 0.01, 0.125],
+  'claude-opus-5': [5, 25, 0.5, 6.25], 'claude-opus-4-8': [5, 25, 0.5, 6.25], 'claude-sonnet-5': [2, 10, 0.2, 2.5]
+};
+function registraSpesa_(voce, modello, u, batch) {
+  if (!u) return;
+  const p = PREZZI[modello] || PREZZI[MODELLO];
+  const t = [u.input_tokens || 0, u.output_tokens || 0, u.cache_read_input_tokens || 0, u.cache_creation_input_tokens || 0];
+  const usd = (batch ? 0.5 : 1) * t.reduce((a, x, i) => a + x * p[i], 0) / 1e6;
+  const lock = LockService.getUserLock(); // non quello di script: chi chiama Claude può già tenerlo (firme)
+  if (!lock.tryLock(10000)) return;
+  try {
+    const oggi = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'), km = 'SPESA_' + oggi.slice(0, 7);
+    const m = JSON.parse(P_().getProperty(km) || '{}'), v = m[voce] = m[voce] || { n: 0, in: 0, out: 0, cr: 0, cw: 0, usd: 0 };
+    v.n++; v.in += t[0]; v.out += t[1]; v.cr += t[2]; v.cw += t[3]; v.usd = Math.round((v.usd + usd) * 1e6) / 1e6; v.modello = modello;
+    if (batch) v.batch = true;
+    P_().setProperty(km, JSON.stringify(m));
+    const g = JSON.parse(P_().getProperty('SPESA_G') || '{}'), d = g[oggi] = g[oggi] || {};
+    d[voce] = Math.round(((d[voce] || 0) + usd) * 1e5) / 1e5;
+    Object.keys(g).sort().slice(0, -62).forEach(x => { delete g[x]; }); // ultimi 62 giorni
+    P_().setProperty('SPESA_G', JSON.stringify(g));
+    if (!P_().getProperty('SPESA_DAL')) P_().setProperty('SPESA_DAL', oggi);
+  } finally { lock.releaseLock(); }
+}
+function spesaSnap_() {
+  const ora = new Date(), mese = Utilities.formatDate(ora, TZ, 'yyyy-MM'), prec = Utilities.formatDate(new Date(ora.getFullYear(), ora.getMonth() - 1, 15), TZ, 'yyyy-MM');
+  return { mese, voci: JSON.parse(P_().getProperty('SPESA_' + mese) || '{}'), mesePrec: { mese: prec, voci: JSON.parse(P_().getProperty('SPESA_' + prec) || '{}') },
+    giorni: JSON.parse(P_().getProperty('SPESA_G') || '{}'), dal: P_().getProperty('SPESA_DAL') || null,
+    modelli: { firme: MODELLO_FIRME, report: MODELLO, posta: MODELLO_POSTA, circolari: MODELLO }, prezzi: PREZZI };
 }
 function raccogliFileId_(x, out) { // file prodotti dall'esecuzione di codice (blocchi *_output con file_id)
   if (!x || typeof x !== 'object') return;
@@ -854,7 +954,7 @@ ${prec}
 </firme_precedenti_della_classe>
 
 Scrivi la firma di questa lezione. Rispondi solo con il testo dell'argomento, senza titoli, virgolette o commenti.`;
-  return chiamaClaude_(REGOLE_FIRME, user);
+  return chiamaClaudeAvanzato_({ system: REGOLE_FIRME, content: user, modello: MODELLO_FIRME, voce: 'firme' }).testo;
 }
 
 // Regole dalla skill firme-registro-classeviva (stile del prof. Caprini). Testo stabile: viene messo in cache dall'API.
