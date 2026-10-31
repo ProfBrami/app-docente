@@ -2,7 +2,7 @@
 // Shell: network-first senza cache HTTP (online c'è sempre l'ultima versione), cache solo come riserva offline.
 // Dati dall'endpoint Apps Script: network-first con fallback all'ultimo JSON valido (header X-Dashboard-Cache: 1).
 // Font Google: cache-first.
-const VERSION = 'v15';
+const VERSION = 'v16';
 const SHELL = 'shell-' + VERSION, DATA = 'data-v1', FONTS = 'fonts-v1';
 const FILES = ['./', './index.html', './app.js', './app.css', './industry-styles.css', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];

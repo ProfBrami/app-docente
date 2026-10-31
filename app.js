@@ -351,9 +351,9 @@ function secOrario(x, c) {
       const bd = l ? (isNow || vs.length ? 'var(--color-accent)' : 'var(--color-divider)') : 'transparent';
       const bg = isNow ? 'var(--color-accent)' : l ? 'transparent' : 'color-mix(in srgb,var(--color-text) 3%,transparent)';
       const fg = isNow ? 'var(--color-bg)' : l ? 'var(--color-text)' : 'color-mix(in srgb,var(--color-text) 35%,transparent)';
-      const sub = vs.length ? 'Verifica' : (l ? l.lab : '');
       const tit = vs.length ? ` title="${esc(vs.map(e => e.testo).join('\n'))}"` : '';
-      return `<span class="og-c${vs.length ? ' og-ver' : ''}"${tit} style="border-color:${bd};background:${bg};color:${fg};opacity:${past ? 0.45 : 1}"><b>${esc(l ? l.cls : '·')}</b><span${vs.length && !isNow ? ' style="font-weight:600;color:var(--color-accent-700)"' : ''}>${esc(sub)}</span></span>`;
+      const ver = vs.length ? `<span${!isNow ? ' style="font-weight:600;color:var(--color-accent-700)"' : ''}>Verifica</span>` : '';
+      return `<span class="og-c${vs.length ? ' og-ver' : ''}"${tit} style="border-color:${bd};background:${bg};color:${fg};opacity:${past ? 0.45 : 1}"><b>${esc(l ? l.cls : '·')}</b><span>${esc(l ? l.lab : '')}</span>${ver}</span>`;
     }).join('');
     html += `<div class="og" style="${cols}"><span class="og-d"><b style="color:${i === 0 ? 'var(--color-accent-700)' : 'var(--color-text)'}">${label}</b><span class="m60">${G3[d.getDay()]} ${dmy(d)}</span></span>${cells}</div>`;
   }
