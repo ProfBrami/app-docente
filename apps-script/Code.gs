@@ -15,8 +15,9 @@
  * della skill gestione-circolari-ciusa (DJ_id, indice DOCS); i documenti richiesti dalle circolari vengono compilati
  * con le Agent Skills (docx/xlsx/pdf) e si scaricano dall'app.
  * Spesa Claude: ogni chiamata somma token e costo stimato per funzione (SPESA_aaaa-mm, SPESA_G per giorno); l'app la mostra
- * nella pagina «Spesa Claude». Verifiche dell'anno (compiti con "verifica" nel titolo): dallo script della scuola ogni ora,
- * salvate a pezzi in VER_0..n (VER_STATO), lette dall'app con ?verifiche=1. Il report passa dalla Batch API (metà prezzo, RB = batch in corso).
+ * nella pagina «Spesa Claude». Verifiche dell'anno: solo su richiesta dall'app (POST aggiorna_verifiche → VER_RICHIESTA);
+ * lo script della scuola la vede con ?richiesta_verifiche=1, rilegge Classroom e invia l'elenco, salvato a pezzi in VER_0..n
+ * (VER_STATO) e letto dall'app con ?verifiche=1. Il report passa dalla Batch API (metà prezzo, RB = batch in corso).
  */
 const SNAP_KEY = 'snapshot';
 const CACHE_TTL = 21600; // max consentito da CacheService
@@ -59,6 +60,7 @@ function doGet(e) {
   if (!tok || !uguali_(String(p.token || ''), tok)) return json_({ errore: 'non autorizzato' });
   if (p.file) return json_(scaricaDocumento_(p.file));
   if (p.verifiche) return json_(verificheSnap_());
+  if (p.richiesta_verifiche) return json_({ richiesta: P_().getProperty('VER_RICHIESTA') || null });
   const snap = p.refresh === '1' ? aggiorna() : (leggiSnap_() || aggiorna());
   return json_(snap);
 }
@@ -83,6 +85,7 @@ function doPost(e) {
     if (b.azione === 'documenti') return json_(riceviDocumenti_(b));
     if (b.azione === 'posta_scuola') return json_(riceviPostaScuola_(b));
     if (b.azione === 'verifiche') return json_(riceviVerifiche_(b));
+    if (b.azione === 'aggiorna_verifiche') { const t = new Date().toISOString(); P_().setProperty('VER_RICHIESTA', t); return json_({ ok: true, richiesta: t }); }
     return json_({ errore: 'azione sconosciuta' });
   } catch (err) { return json_({ errore: String(err.message || err).slice(0, 300) }); }
 }
@@ -505,7 +508,7 @@ function verificheSnap_() {
   if (!st) return { aggiornato: null, errore: 'nessun dato dallo script della scuola', verifiche: [] };
   let s = ''; for (let i = 0; i < (st.n || 0); i++) s += P_().getProperty('VER_' + i) || '';
   let verifiche = []; try { verifiche = JSON.parse(s || '[]'); } catch (e) { return { aggiornato: st.aggiornato, errore: 'elenco delle verifiche illeggibile', verifiche: [] }; }
-  return { aggiornato: st.aggiornato || null, errore: st.errore || null, verifiche };
+  return { aggiornato: st.aggiornato || null, errore: st.errore || null, erroreAlle: st.erroreAlle || null, verifiche };
 }
 
 /* ---------- report lezioni ---------- */

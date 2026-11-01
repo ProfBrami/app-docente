@@ -11,8 +11,8 @@
  *   classe e li invia al backend, che genera la firma con Claude.
  * - Ogni 15 minuti (6–23) invia al backend le mail nuove della casella della scuola: il backend fa valutare a Claude
  *   quali chiedono un adempimento al docente e solo quelle compaiono in Scadenze. Le altre vengono ignorate.
- * - Ogni ora (6–23) invia al backend le verifiche dell'anno scolastico: i compiti del docente con "verifica" nel titolo
- *   nelle quattro classi (sezione Verifiche dell'app).
+ * - Verifiche dell'anno (sezione Verifiche dell'app): solo su richiesta. Quando nell'app si preme «Aggiorna», il backend
+ *   segna la richiesta; ogni 5 minuti questo script la controlla e, se è nuova, rilegge Classroom e invia l'elenco.
  * Script Properties: ENDPOINT (URL /exec del backend personale), TOKEN (lo stesso del backend).
  * Setup: verifica() per autorizzare e controllare, poi installa().
  */
@@ -89,7 +89,7 @@ function ciclo() {
   const adesso = new Date(), h = Number(Utilities.formatDate(adesso, TZ, 'H')), m = Number(Utilities.formatDate(adesso, TZ, 'm'));
   if (m % 15 < 5) inviaStato();
   if (m % 15 < 5 && h >= 6 && h < 23) postaScuola();
-  if (m < 5 && h >= 6 && h < 23) inviaVerifiche();
+  controllaRichiestaVerifiche();
   if (h >= 8 && h < 16) firmeDovute(); // rete di sicurezza se un trigger puntuale non è partito
   if (h >= 8 && h < 23) controllaReport();
 }
@@ -229,9 +229,12 @@ function streamDiff_(cls, da, a) {
 }
 
 /* ---------- verifiche ---------- */
-// Compiti del docente con "verifica" nel titolo, dal 1° settembre dell'anno scolastico in corso (esclusi i ripassi
-// e le esercitazioni di preparazione). Data della verifica = data di consegna se c'è, altrimenti di pubblicazione.
+// Compiti del docente dal 1° settembre dell'anno scolastico in corso con "verifica" nel titolo o con il titolo tutto
+// in maiuscolo (il docente scrive così le verifiche), esclusi ripassi ed esercitazioni di preparazione.
+// Data della verifica = data di consegna se c'è, altrimenti di pubblicazione.
 const RE_VERIFICA = /verific/i, RE_NON_VERIFICA = /prepara|ripasso|simulaz|in vista/i;
+const maiuscolo_ = t => (t.match(/\p{L}/gu) || []).length >= 4 && t === t.toUpperCase();
+const eVerifica_ = t => !RE_NON_VERIFICA.test(t) && (RE_VERIFICA.test(t) || maiuscolo_(t));
 function verifiche_() {
   const me = mioId_(), oggi = new Date(), out = [], g = d => [d.year, String(d.month).padStart(2, '0'), String(d.day).padStart(2, '0')].join('-');
   const inizio = new Date(oggi.getMonth() >= 8 ? oggi.getFullYear() : oggi.getFullYear() - 1, 8, 1).toISOString();
@@ -239,7 +242,7 @@ function verifiche_() {
     let tok;
     do {
       const r = Classroom.Courses.CourseWork.list(CORSI[cls], { pageSize: 100, pageToken: tok });
-      (r.courseWork || []).filter(x => x.creatorUserId === me && x.creationTime >= inizio && RE_VERIFICA.test(x.title || '') && !RE_NON_VERIFICA.test(x.title || '')).forEach(x => {
+      (r.courseWork || []).filter(x => x.creatorUserId === me && x.creationTime >= inizio && eVerifica_(x.title || '')).forEach(x => {
         const pubbl = new Date(x.scheduledTime || x.creationTime);
         out.push({ id: x.id, classe: cls, titolo: x.title || '', data: x.dueDate ? g(x.dueDate) : iso_(pubbl),
           pubblicata: Utilities.formatDate(pubbl, TZ, 'yyyy-MM-dd HH:mm'), scadenza: x.dueDate ? g(x.dueDate) : '',
@@ -249,6 +252,14 @@ function verifiche_() {
     } while (tok);
   });
   return out.sort((a, b) => (a.data + a.pubblicata).localeCompare(b.data + b.pubblicata));
+}
+// Richiesta dall'app (pulsante «Aggiorna» nella sezione Verifiche): si rilegge Classroom solo se è nuova.
+function controllaRichiestaVerifiche() {
+  const r = UrlFetchApp.fetch(P_().getProperty('ENDPOINT') + '?richiesta_verifiche=1&token=' + encodeURIComponent(P_().getProperty('TOKEN')), { muteHttpExceptions: true, followRedirects: true });
+  let j; try { j = JSON.parse(r.getContentText()); } catch (e) { return; }
+  if (!j.richiesta || j.richiesta === P_().getProperty('VER_FATTA')) return;
+  P_().setProperty('VER_FATTA', j.richiesta);
+  Logger.log('Verifiche richieste dall\'app: ' + JSON.stringify(inviaVerifiche()));
 }
 function inviaVerifiche() {
   let verifiche = [], errore = null;

@@ -744,7 +744,9 @@ function vaiPagina(p) {
 ['hashchange', 'popstate'].forEach(ev => addEventListener(ev, () => { S.pagina = paginaDaHash(); render(); if (S.pagina === 'verifiche') caricaVerifiche(); }));
 
 /* ---------- pagina Verifiche ---------- */
-// Elenco dal backend (?verifiche=1): compiti di Classroom con "verifica" nel titolo, letti ogni ora dallo script della scuola.
+// Elenco dal backend (?verifiche=1): compiti di Classroom con "verifica" nel titolo o tutto in maiuscolo. Classroom si rilegge
+// solo con «Aggiorna»: la richiesta va al backend, lo script della scuola la vede entro 5 minuti e invia l'elenco nuovo;
+// intanto la pagina ricarica l'elenco ogni 20 secondi (per al più 10 minuti).
 // A sinistra l'elenco cronologico (filtrabile per classe), a destra il dettaglio della verifica scelta.
 async function caricaVerifiche() {
   if (S.ver.carico || !collegato()) return;
@@ -754,11 +756,25 @@ async function caricaVerifiche() {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const j = await r.json();
     if (!Array.isArray(j.verifiche)) throw new Error(r.headers.get('X-Dashboard-Cache') === '1' ? 'offline' : j.errore || 'risposta non valida');
-    S.ver = { dati: j, carico: false, err: '', at: Date.now() };
+    let attesa = S.ver.attesa || null, err = '';
+    if (attesa && ((j.aggiornato && j.aggiornato > attesa.da) || (j.erroreAlle && j.erroreAlle > attesa.da))) attesa = null;
+    else if (attesa && Date.now() - Date.parse(attesa.da) > 10 * 60e3) { attesa = null; err = 'lo script della scuola non ha risposto: controlla le sue Esecuzioni in Apps Script'; }
+    S.ver = { dati: j, carico: false, err, at: Date.now(), attesa };
     if (!S.mock) ls.set(K.verifiche, j);
-  } catch (e) { S.ver = { ...S.ver, carico: false, err: e.message || String(e) }; }
+  } catch (e) { S.ver = { ...S.ver, carico: false, err: e.message || String(e), at: Date.now() }; }
   render();
 }
+async function aggiornaVerifiche() {
+  if (S.ver.attesa) return;
+  if (S.mock) { caricaVerifiche(); return; }
+  try {
+    const r = await fetch(ls.get(K.endpoint, ''), { method: 'POST', body: JSON.stringify({ azione: 'aggiorna_verifiche', token: ls.get(K.token, '') }), headers: { 'Content-Type': 'text/plain;charset=utf-8' }, credentials: 'omit', redirect: 'follow' });
+    const j = await r.json(); if (!j.ok) throw new Error(j.errore || 'richiesta rifiutata');
+    S.ver = { ...S.ver, attesa: { da: j.richiesta }, err: '' };
+  } catch (e) { S.ver = { ...S.ver, err: 'richiesta non inviata (' + (e.message || e) + ')' }; }
+  render();
+}
+const verificheInAttesa = () => S.pagina === 'verifiche' && S.ver.attesa && !S.ver.carico && Date.now() - S.ver.at > 20e3;
 const dataLunga = g => { const d = new Date(g + 'T12:00:00'); return GG[d.getDay()] + ' ' + d.getDate() + ' ' + MESI[d.getMonth()] + ' ' + d.getFullYear(); };
 function renderVerifiche() {
   const now = adesso(), oggi = iso(now), j = S.ver.dati, tutte = (j && j.verifiche) || [];
@@ -766,12 +782,13 @@ function renderVerifiche() {
   const elenco = tutte.filter(v => !S.verClasse || v.classe === S.verClasse);
   const scelta = elenco.find(v => v.id === S.verSel) || elenco.filter(v => v.data <= oggi).pop() || elenco[elenco.length - 1];
   const agg = j && j.aggiornato ? new Date(j.aggiornato) : null;
-  const stato = [agg ? 'Da Classroom, aggiornate alle ' + hm(agg) + (iso(agg) !== oggi ? ' del ' + dmy(agg) : '') : '', S.ver.carico ? 'carico…' : '',
+  const stato = [agg ? 'Da Classroom, aggiornate alle ' + hm(agg) + (iso(agg) !== oggi ? ' del ' + dmy(agg) : '') : '',
+    S.ver.attesa ? 'aggiornamento richiesto alle ' + hm(new Date(S.ver.attesa.da)) + ': lo script della scuola rilegge Classroom entro 5 minuti…' : S.ver.carico ? 'carico…' : '',
     S.ver.err ? (S.ver.err === 'offline' ? 'offline: ultimo elenco salvato' : 'aggiornamento non riuscito: ' + S.ver.err) : '', j && j.errore ? j.errore : ''].filter(Boolean).join(' · ');
 
   let sx = `<div class="row ver-f" role="radiogroup" aria-label="Classe">${[['', 'Tutte'], ...classi.map(c => [c, c])].map(([c, nome]) => `<button class="btn ${c === S.verClasse ? 'btn-primary' : 'btn-ghost'}" data-act="ver-classe" data-id="${c}" aria-pressed="${c === S.verClasse}">${nome}</button>`).join('')}</div>`;
   if (!elenco.length) sx += empty(j ? 'Nessuna verifica trovata' : S.ver.carico ? 'Carico le verifiche…' : 'Verifiche non disponibili',
-    j ? 'Cerco in Classroom i compiti con «verifica» nel titolo, dal 1° settembre, nelle tue quattro classi.' : 'Lo script della scuola le invia ogni ora: aggiorna Classroom.gs ed esegui verifica() dall\'editor.');
+    j ? 'Cerco in Classroom i compiti con «verifica» nel titolo o tutto in maiuscolo, dal 1° settembre, nelle tue quattro classi.' : 'Premi «Aggiorna»: lo script della scuola rilegge Classroom entro 5 minuti.');
   else {
     let mese = '';
     sx += '<ol class="plain ver-l">' + elenco.map(v => {
@@ -802,7 +819,7 @@ function renderVerifiche() {
     <div class="ver-h"><div><span class="kicker">Verifiche · anno scolastico ${now.getMonth() >= 8 ? now.getFullYear() + '/' + String(now.getFullYear() + 1).slice(2) : now.getFullYear() - 1 + '/' + String(now.getFullYear()).slice(2)}</span>
       <h2 class="hd">${tutte.length} verifiche${S.verClasse ? ' · ' + elenco.length + ' della ' + esc(S.verClasse) : ''}</h2>
       <span class="small m62">${esc(stato)}</span></div>
-      <button class="btn btn-secondary" data-act="ver-aggiorna" ${S.ver.carico ? 'disabled' : ''}>Ricarica</button></div>
+      <button class="btn btn-secondary" data-act="ver-aggiorna" title="Rilegge le verifiche da Classroom" ${S.ver.attesa ? 'disabled' : ''}>${S.ver.attesa ? 'Aggiornamento in corso…' : 'Aggiorna'}</button></div>
     <div class="ver">
       <section class="blueprint sec ver-sx" aria-label="Elenco delle verifiche">${CORNERS}${sx}</section>
       <section class="blueprint sec ver-dx" id="ver-dettaglio" aria-live="polite">${CORNERS}${dx}</section>
@@ -957,7 +974,7 @@ document.addEventListener('click', e => {
   else if (a === 'credito') salvaCredito();
   else if (a === 'ver-sel') { S.verSel = id; render(); if (matchMedia('(max-width:860px)').matches) { const d = document.getElementById('ver-dettaglio'); if (d) d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }
   else if (a === 'ver-classe') { S.verClasse = id; S.verSel = ''; render(); }
-  else if (a === 'ver-aggiorna') caricaVerifiche();
+  else if (a === 'ver-aggiorna') aggiornaVerifiche();
   else if (a === 'copyfirma') copiaFirma(el);
   else if (a === 'scegli') { const f = document.getElementById('doc-file'); if (f) f.click(); }
   else if (a === 'ics') scaricaIcs(el.dataset.job, Number(el.dataset.c), Number(el.dataset.p));
@@ -1036,6 +1053,7 @@ function modelloFase() { const n = adesso(), m = n.getHours() * 60 + n.getMinute
 if (S.pagina === 'verifiche') caricaVerifiche();
 setInterval(() => {
   if (S.setup || !collegato()) return;
+  if (document.visibilityState === 'visible' && verificheInAttesa()) caricaVerifiche();
   if (document.visibilityState === 'visible' && (Date.now() - S.lastFetch > 15 * 60e3 || bozzaInArrivo() || reportInArrivo() || documentiInCorso())) carica(); else render();
 }, 30e3);
 document.addEventListener('visibilitychange', () => {
