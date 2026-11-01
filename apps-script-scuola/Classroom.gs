@@ -229,12 +229,12 @@ function streamDiff_(cls, da, a) {
 }
 
 /* ---------- verifiche ---------- */
-// Compiti del docente dal 1° settembre dell'anno scolastico in corso con "verifica" nel titolo o con il titolo tutto
+// Compiti del docente dal 1° settembre dell'anno scolastico in corso con "VERIFICA" nel titolo e il titolo tutto
 // in maiuscolo (il docente scrive così le verifiche), esclusi ripassi ed esercitazioni di preparazione.
 // Data della verifica = data di consegna se c'è, altrimenti di pubblicazione.
 const RE_VERIFICA = /verific/i, RE_NON_VERIFICA = /prepara|ripasso|simulaz|in vista/i;
 const maiuscolo_ = t => (t.match(/\p{L}/gu) || []).length >= 4 && t === t.toUpperCase();
-const eVerifica_ = t => !RE_NON_VERIFICA.test(t) && (RE_VERIFICA.test(t) || maiuscolo_(t));
+const eVerifica_ = t => !RE_NON_VERIFICA.test(t) && RE_VERIFICA.test(t) && maiuscolo_(t);
 function verifiche_() {
   const me = mioId_(), oggi = new Date(), out = [], g = d => [d.year, String(d.month).padStart(2, '0'), String(d.day).padStart(2, '0')].join('-');
   const inizio = new Date(oggi.getMonth() >= 8 ? oggi.getFullYear() : oggi.getFullYear() - 1, 8, 1).toISOString();

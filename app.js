@@ -744,7 +744,7 @@ function vaiPagina(p) {
 ['hashchange', 'popstate'].forEach(ev => addEventListener(ev, () => { S.pagina = paginaDaHash(); render(); if (S.pagina === 'verifiche') caricaVerifiche(); }));
 
 /* ---------- pagina Verifiche ---------- */
-// Elenco dal backend (?verifiche=1): compiti di Classroom con "verifica" nel titolo o tutto in maiuscolo. Classroom si rilegge
+// Elenco dal backend (?verifiche=1): compiti di Classroom con "VERIFICA" nel titolo, tutto in maiuscolo. Classroom si rilegge
 // solo con «Aggiorna»: la richiesta va al backend, lo script della scuola la vede entro 5 minuti e invia l'elenco nuovo;
 // intanto la pagina ricarica l'elenco ogni 20 secondi (per al più 10 minuti).
 // A sinistra l'elenco cronologico (filtrabile per classe), a destra il dettaglio della verifica scelta.
@@ -788,7 +788,7 @@ function renderVerifiche() {
 
   let sx = `<div class="row ver-f" role="radiogroup" aria-label="Classe">${[['', 'Tutte'], ...classi.map(c => [c, c])].map(([c, nome]) => `<button class="btn ${c === S.verClasse ? 'btn-primary' : 'btn-ghost'}" data-act="ver-classe" data-id="${c}" aria-pressed="${c === S.verClasse}">${nome}</button>`).join('')}</div>`;
   if (!elenco.length) sx += empty(j ? 'Nessuna verifica trovata' : S.ver.carico ? 'Carico le verifiche…' : 'Verifiche non disponibili',
-    j ? 'Cerco in Classroom i compiti con «verifica» nel titolo o tutto in maiuscolo, dal 1° settembre, nelle tue quattro classi.' : 'Premi «Aggiorna»: lo script della scuola rilegge Classroom entro 5 minuti.');
+    j ? 'Cerco in Classroom i compiti con «VERIFICA» nel titolo scritto tutto in maiuscolo, dal 1° settembre, nelle tue quattro classi.' : 'Premi «Aggiorna»: lo script della scuola rilegge Classroom entro 5 minuti.');
   else {
     let mese = '';
     sx += '<ol class="plain ver-l">' + elenco.map(v => {
