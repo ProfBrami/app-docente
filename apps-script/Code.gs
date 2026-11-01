@@ -15,7 +15,8 @@
  * della skill gestione-circolari-ciusa (DJ_id, indice DOCS); i documenti richiesti dalle circolari vengono compilati
  * con le Agent Skills (docx/xlsx/pdf) e si scaricano dall'app.
  * Spesa Claude: ogni chiamata somma token e costo stimato per funzione (SPESA_aaaa-mm, SPESA_G per giorno); l'app la mostra
- * nella pagina «Spesa Claude». Il report passa dalla Batch API (metà prezzo, RB = batch in corso).
+ * nella pagina «Spesa Claude». Verifiche dell'anno (compiti con "verifica" nel titolo): dallo script della scuola ogni ora,
+ * salvate a pezzi in VER_0..n (VER_STATO), lette dall'app con ?verifiche=1. Il report passa dalla Batch API (metà prezzo, RB = batch in corso).
  */
 const SNAP_KEY = 'snapshot';
 const CACHE_TTL = 21600; // max consentito da CacheService
@@ -57,6 +58,7 @@ function doGet(e) {
   const tok = PropertiesService.getScriptProperties().getProperty('TOKEN');
   if (!tok || !uguali_(String(p.token || ''), tok)) return json_({ errore: 'non autorizzato' });
   if (p.file) return json_(scaricaDocumento_(p.file));
+  if (p.verifiche) return json_(verificheSnap_());
   const snap = p.refresh === '1' ? aggiorna() : (leggiSnap_() || aggiorna());
   return json_(snap);
 }
@@ -80,6 +82,7 @@ function doPost(e) {
     if (b.azione === 'letta') return json_(segnaLetta_(b));
     if (b.azione === 'documenti') return json_(riceviDocumenti_(b));
     if (b.azione === 'posta_scuola') return json_(riceviPostaScuola_(b));
+    if (b.azione === 'verifiche') return json_(riceviVerifiche_(b));
     return json_({ errore: 'azione sconosciuta' });
   } catch (err) { return json_({ errore: String(err.message || err).slice(0, 300) }); }
 }
@@ -482,6 +485,27 @@ function salvaScadenze_(arr) {
 function scadenzeSalvate_() {
   const limite = Utilities.formatDate(new Date(Date.now() - 3 * 864e5), TZ, 'yyyy-MM-dd'), vecchio = new Date(Date.now() - 30 * 864e5).toISOString();
   return JSON.parse(P_().getProperty('SC_SALVATE') || '[]').filter(x => x.d ? x.d >= limite : x.il >= vecchio);
+}
+
+/* ---------- verifiche ---------- */
+// b: { verifiche: [{ id, classe, titolo, data, pubblicata, scadenza, testo, allegati[], punti, link }], errore }
+// Il JSON supera il limite di 9 KB di una proprietà: si salva a pezzi da 3000 caratteri. Con un errore resta l'ultimo elenco.
+function riceviVerifiche_(b) {
+  const st = JSON.parse(P_().getProperty('VER_STATO') || '{}'), ora = new Date().toISOString();
+  if (b.errore) { P_().setProperty('VER_STATO', JSON.stringify(Object.assign(st, { errore: String(b.errore).slice(0, 200), erroreAlle: ora }))); return { ok: true }; }
+  const s = JSON.stringify(b.verifiche || []), n = Math.ceil(s.length / 3000), pezzi = {};
+  for (let i = 0; i < n; i++) pezzi['VER_' + i] = s.slice(i * 3000, (i + 1) * 3000);
+  P_().setProperties(pezzi);
+  for (let i = n; i < (st.n || 0); i++) P_().deleteProperty('VER_' + i);
+  P_().setProperty('VER_STATO', JSON.stringify({ aggiornato: ora, errore: null, n }));
+  return { ok: true, verifiche: (b.verifiche || []).length };
+}
+function verificheSnap_() {
+  const st = JSON.parse(P_().getProperty('VER_STATO') || 'null');
+  if (!st) return { aggiornato: null, errore: 'nessun dato dallo script della scuola', verifiche: [] };
+  let s = ''; for (let i = 0; i < (st.n || 0); i++) s += P_().getProperty('VER_' + i) || '';
+  let verifiche = []; try { verifiche = JSON.parse(s || '[]'); } catch (e) { return { aggiornato: st.aggiornato, errore: 'elenco delle verifiche illeggibile', verifiche: [] }; }
+  return { aggiornato: st.aggiornato || null, errore: st.errore || null, verifiche };
 }
 
 /* ---------- report lezioni ---------- */

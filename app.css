@@ -225,3 +225,23 @@ textarea.note{min-height:150px;resize:vertical;font-size:14px;line-height:1.5}
 .sp-l li:first-child{border-top:0}
 .sp-r{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px}
 @media (max-width:520px){.sp-l li{grid-template-columns:70px 1fr}.sp-l li .small{grid-column:1 / -1}}
+
+/* — pagina Verifiche: elenco a sinistra, dettaglio a destra — */
+.menu{gap:6px}
+.ver-h{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.ver-h > div{display:flex;flex-direction:column;gap:2px}
+.ver-h h2{margin:0;font-size:28px}
+.ver{display:grid;grid-template-columns:minmax(280px,380px) 1fr;gap:24px;align-items:start}
+.ver-sx{max-height:calc(100vh - 140px);overflow-y:auto}
+.ver-dx{position:sticky;top:calc(16px + env(safe-area-inset-top,0px))}
+.ver-f{gap:4px}
+.ver-f .btn{min-height:30px;padding:2px 10px}
+.ver-m{padding:12px 0 4px}
+.ver-m:first-child{padding-top:0}
+.ver-i{display:grid;grid-template-columns:72px auto 1fr;gap:8px;align-items:baseline;width:100%;padding:8px 6px;font:inherit;font-size:14px;text-align:left;color:inherit;background:none;border:0;border-top:1px solid var(--color-divider);cursor:pointer;font-variant-numeric:tabular-nums}
+.ver-i:hover{background:color-mix(in srgb,var(--color-accent) 8%,transparent)}
+.ver-i.on{background:var(--color-accent-100);color:var(--color-accent-900)}
+.ver-t{display:flex;flex-direction:column;min-width:0;font-weight:500}
+.ver-x{white-space:pre-wrap;font-size:14px;line-height:1.5;padding:12px;border:1px solid var(--color-divider);max-height:55vh;overflow-y:auto}
+.ver-a li{padding:3px 0;font-size:14px}
+@media (max-width:860px){.ver{grid-template-columns:1fr}.ver-sx{max-height:none}.ver-dx{position:static}}

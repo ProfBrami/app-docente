@@ -43,7 +43,7 @@ const CLASSEVIVA_BACHECA = 'https://web.spaggiari.eu/sif/app/default/bacheca_per
 const CLASSEVIVA_COMANDO = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Apri ClasseViva');
 const daClasseviva = i => i.fonte === 'ClasseViva' || i.fonte === 'Segreteria Digitale';
 const claudeLink = t => `href="${(MAC ? 'claude://claude.ai/new?q=' : 'https://claude.ai/new?q=') + encodeURIComponent(t)}"${MAC ? '' : ' target="_blank" rel="noopener"'}`;
-const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda',nascoste:'pd_circ_nascoste',lette:'pd_circ_lette',credito:'pd_credito'};
+const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda',nascoste:'pd_circ_nascoste',lette:'pd_circ_lette',credito:'pd_credito',verifiche:'pd_verifiche'};
 
 const CORNERS = '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
 const ICON_ALERT = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>';
@@ -87,8 +87,13 @@ const S = {
   done: ls.json(K.done, {}), mod: ls.json(K.mod, {}), coda: ls.json(K.coda, []), nascoste: ls.json(K.nascoste, []), lette: ls.json(K.lette, []), ultimaFirmata: 0, invio: null, invioErr: '', trascina: false, tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
   utLab: LABS[0], utText: '',
   variante: ls.get(K.variante, 'A'), tema: ls.get(K.tema, 'auto'),
-  pagina: location.hash === '#spesa' ? 'spesa' : '', credito: ls.json(K.credito, null), crUsd: '', crData: ''
+  pagina: '', credito: ls.json(K.credito, null), crUsd: '', crData: '',
+  ver: { dati: ls.json(K.verifiche, null), carico: false, err: '', at: 0 }, verSel: '', verClasse: ''
 };
+// pagine oltre alla plancia: #verifiche, #spesa
+const PAGINE = [['', 'Plancia'], ['verifiche', 'Verifiche'], ['spesa', 'Spesa Claude']];
+const paginaDaHash = () => { const h = location.hash.slice(1); return PAGINE.some(([id]) => id && id === h) ? h : ''; };
+S.pagina = paginaDaHash();
 const collegato = () => S.mock || (ls.get(K.endpoint) && ls.get(K.token));
 
 /* ---------- dati ---------- */
@@ -173,6 +178,7 @@ function render() {
   if (!collegato() || S.setup) root.innerHTML = renderSetup();
   else if (!S.data) root.innerHTML = renderAttesa();
   else if (S.pagina === 'spesa') root.innerHTML = renderSpesa();
+  else if (S.pagina === 'verifiche') root.innerHTML = renderVerifiche();
   else root.innerHTML = renderDashboard();
 
   if (focusId) { const el = document.getElementById(focusId); if (el) { el.focus({ preventScroll: true }); if (sel && el.setSelectionRange) try { el.setSelectionRange(sel[0], sel[1]); } catch (e) {} el.scrollTop = top; } }
@@ -235,7 +241,7 @@ function renderTop(now) {
         <span class="date-long">${GG[now.getDay()]} ${now.getDate()} ${MESI[now.getMonth()]} ${now.getFullYear()}</span>
       </div>
       <div class="row" style="align-items:flex-end;gap:10px">
-        ${S.data ? `<button class="btn btn-secondary" data-act="pagina" data-id="${S.pagina === 'spesa' ? '' : 'spesa'}" title="Quanto costa Claude: spesa per funzione e credito residuo">${S.pagina === 'spesa' ? 'Torna alla plancia' : 'Spesa Claude'}</button>` : ''}
+        ${S.data ? `<nav class="row menu" aria-label="Sezioni">${PAGINE.filter(([id]) => id !== S.pagina).map(([id, nome]) => `<button class="btn btn-secondary" data-act="pagina" data-id="${id}">${id ? nome : 'Torna alla plancia'}</button>`).join('')}</nav>` : ''}
         <button class="btn btn-secondary refresh${S.loading ? ' spin' : ''}" data-act="refresh" aria-label="Aggiorna i dati" title="Aggiorna (ricostruisce lo snapshot)" ${S.loading ? 'disabled' : ''}>${ICON_REFRESH}</button>
         <span class="clock">${hm(now)}</span>
       </div>
@@ -733,8 +739,75 @@ function salvaCredito() {
 function vaiPagina(p) {
   if (p) location.hash = p; else history.pushState(null, '', location.pathname + location.search);
   S.pagina = p; scrollTo(0, 0); render();
+  if (p === 'verifiche') caricaVerifiche();
 }
-['hashchange', 'popstate'].forEach(ev => addEventListener(ev, () => { S.pagina = location.hash === '#spesa' ? 'spesa' : ''; render(); }));
+['hashchange', 'popstate'].forEach(ev => addEventListener(ev, () => { S.pagina = paginaDaHash(); render(); if (S.pagina === 'verifiche') caricaVerifiche(); }));
+
+/* ---------- pagina Verifiche ---------- */
+// Elenco dal backend (?verifiche=1): compiti di Classroom con "verifica" nel titolo, letti ogni ora dallo script della scuola.
+// A sinistra l'elenco cronologico (filtrabile per classe), a destra il dettaglio della verifica scelta.
+async function caricaVerifiche() {
+  if (S.ver.carico || !collegato()) return;
+  S.ver = { ...S.ver, carico: true, err: '' }; render();
+  try {
+    const r = await fetch(S.mock ? './dev/verifiche-esempio.json' : urlDati(false) + '&verifiche=1', { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    if (!Array.isArray(j.verifiche)) throw new Error(r.headers.get('X-Dashboard-Cache') === '1' ? 'offline' : j.errore || 'risposta non valida');
+    S.ver = { dati: j, carico: false, err: '', at: Date.now() };
+    if (!S.mock) ls.set(K.verifiche, j);
+  } catch (e) { S.ver = { ...S.ver, carico: false, err: e.message || String(e) }; }
+  render();
+}
+const dataLunga = g => { const d = new Date(g + 'T12:00:00'); return GG[d.getDay()] + ' ' + d.getDate() + ' ' + MESI[d.getMonth()] + ' ' + d.getFullYear(); };
+function renderVerifiche() {
+  const now = adesso(), oggi = iso(now), j = S.ver.dati, tutte = (j && j.verifiche) || [];
+  const classi = [...new Set(tutte.map(v => v.classe))].sort();
+  const elenco = tutte.filter(v => !S.verClasse || v.classe === S.verClasse);
+  const scelta = elenco.find(v => v.id === S.verSel) || elenco.filter(v => v.data <= oggi).pop() || elenco[elenco.length - 1];
+  const agg = j && j.aggiornato ? new Date(j.aggiornato) : null;
+  const stato = [agg ? 'Da Classroom, aggiornate alle ' + hm(agg) + (iso(agg) !== oggi ? ' del ' + dmy(agg) : '') : '', S.ver.carico ? 'carico…' : '',
+    S.ver.err ? (S.ver.err === 'offline' ? 'offline: ultimo elenco salvato' : 'aggiornamento non riuscito: ' + S.ver.err) : '', j && j.errore ? j.errore : ''].filter(Boolean).join(' · ');
+
+  let sx = `<div class="row ver-f" role="radiogroup" aria-label="Classe">${[['', 'Tutte'], ...classi.map(c => [c, c])].map(([c, nome]) => `<button class="btn ${c === S.verClasse ? 'btn-primary' : 'btn-ghost'}" data-act="ver-classe" data-id="${c}" aria-pressed="${c === S.verClasse}">${nome}</button>`).join('')}</div>`;
+  if (!elenco.length) sx += empty(j ? 'Nessuna verifica trovata' : S.ver.carico ? 'Carico le verifiche…' : 'Verifiche non disponibili',
+    j ? 'Cerco in Classroom i compiti con «verifica» nel titolo, dal 1° settembre, nelle tue quattro classi.' : 'Lo script della scuola le invia ogni ora: aggiorna Classroom.gs ed esegui verifica() dall\'editor.');
+  else {
+    let mese = '';
+    sx += '<ol class="plain ver-l">' + elenco.map(v => {
+      const m = v.data.slice(0, 7), intest = m !== mese ? `<li class="ver-m kicker">${MESI[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}</li>` : '';
+      mese = m;
+      const d = new Date(v.data + 'T12:00:00'), futura = v.data > oggi;
+      return intest + `<li><button class="ver-i${v === scelta ? ' on' : ''}" data-act="ver-sel" data-id="${esc(v.id)}" aria-current="${v === scelta}">
+        <span class="ver-d">${G3[d.getDay()]} ${dmy(d)}</span><span class="tag ${v === scelta ? 'tag-accent' : 'tag-neutral'}">${esc(v.classe)}</span>
+        <span class="ver-t">${esc(v.titolo)}${futura ? '<span class="small m60">in programma</span>' : ''}</span></button></li>`;
+    }).join('') + '</ol>';
+  }
+
+  let dx = '';
+  if (scelta) {
+    const cmd = 'Correggi la verifica «' + scelta.titolo + '» della ' + scelta.classe + ' del ' + dmyIso(scelta.data) + ' (skill valutazione-pratica).';
+    COPIE['ver-cmd'] = cmd;
+    const meta = [dataLunga(scelta.data), scelta.pubblicata ? 'pubblicata il ' + dmyIso(scelta.pubblicata.slice(0, 10)) + ' alle ' + scelta.pubblicata.slice(11, 16) : '',
+      scelta.scadenza ? 'consegna entro il ' + dmyIso(scelta.scadenza) : '', scelta.punti ? 'punteggio massimo ' + scelta.punti : ''].filter(Boolean).join(' · ');
+    dx = `<header class="sec-h"><div><span class="kicker">Verifica · ${esc(scelta.classe)}</span><h3>${esc(scelta.titolo)}</h3></div></header>
+      <span class="small m62">${esc(meta)}</span>
+      ${scelta.testo ? `<div class="ver-x">${esc(scelta.testo)}</div>` : '<p class="m62" style="margin:0;font-size:14px">Nessuna consegna scritta nel compito: la traccia è negli allegati.</p>'}
+      ${(scelta.allegati || []).length ? `<div class="col" style="gap:6px"><span class="kicker">Allegati</span><ul class="plain ver-a">${scelta.allegati.map(a => `<li>${safeUrl(a.url) ? `<a href="${safeUrl(a.url)}" target="_blank" rel="noopener">${esc(a.titolo)}</a>` : esc(a.titolo)}</li>`).join('')}</ul></div>` : ''}
+      <div class="row">${safeUrl(scelta.link) ? `<a class="btn btn-primary" href="${safeUrl(scelta.link)}" target="_blank" rel="noopener">Apri in Classroom</a>` : ''}
+        <button class="btn btn-secondary" data-act="copy" data-key="ver-cmd">${S.copied === 'ver-cmd' ? 'Copiato' : 'Copia comando di correzione'}</button><a class="btn btn-ghost" ${claudeLink(cmd)}>Correggi con Claude</a></div>`;
+  } else dx = empty('Scegli una verifica dall\'elenco.');
+
+  return `<div class="wrap">${renderTop(now)}
+    <div class="ver-h"><div><span class="kicker">Verifiche · anno scolastico ${now.getMonth() >= 8 ? now.getFullYear() + '/' + String(now.getFullYear() + 1).slice(2) : now.getFullYear() - 1 + '/' + String(now.getFullYear()).slice(2)}</span>
+      <h2 class="hd">${tutte.length} verifiche${S.verClasse ? ' · ' + elenco.length + ' della ' + esc(S.verClasse) : ''}</h2>
+      <span class="small m62">${esc(stato)}</span></div>
+      <button class="btn btn-secondary" data-act="ver-aggiorna" ${S.ver.carico ? 'disabled' : ''}>Ricarica</button></div>
+    <div class="ver">
+      <section class="blueprint sec ver-sx" aria-label="Elenco delle verifiche">${CORNERS}${sx}</section>
+      <section class="blueprint sec ver-dx" id="ver-dettaglio" aria-live="polite">${CORNERS}${dx}</section>
+    </div></div>`;
+}
 
 /* ---------- firme: modifica, copia, invio al backend ---------- */
 // Una firma può arrivare come testo (firme.json delle skill) o come oggetto generato dal backend.
@@ -882,6 +955,9 @@ document.addEventListener('click', e => {
   else if (a === 'refresh') carica(true);
   else if (a === 'pagina') vaiPagina(id);
   else if (a === 'credito') salvaCredito();
+  else if (a === 'ver-sel') { S.verSel = id; render(); if (matchMedia('(max-width:860px)').matches) { const d = document.getElementById('ver-dettaglio'); if (d) d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }
+  else if (a === 'ver-classe') { S.verClasse = id; S.verSel = ''; render(); }
+  else if (a === 'ver-aggiorna') caricaVerifiche();
   else if (a === 'copyfirma') copiaFirma(el);
   else if (a === 'scegli') { const f = document.getElementById('doc-file'); if (f) f.click(); }
   else if (a === 'ics') scaricaIcs(el.dataset.job, Number(el.dataset.c), Number(el.dataset.p));
@@ -957,6 +1033,7 @@ document.addEventListener('submit', async e => {
 function modelloFase() { const n = adesso(), m = n.getHours() * 60 + n.getMinutes(); return m >= 360 && m < 840 ? 'mattina' : m >= 840 && m < 1195 ? 'pomeriggio' : 'sera'; }
 
 /* ---------- ciclo di vita ---------- */
+if (S.pagina === 'verifiche') caricaVerifiche();
 setInterval(() => {
   if (S.setup || !collegato()) return;
   if (document.visibilityState === 'visible' && (Date.now() - S.lastFetch > 15 * 60e3 || bozzaInArrivo() || reportInArrivo() || documentiInCorso())) carica(); else render();

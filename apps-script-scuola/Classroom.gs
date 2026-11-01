@@ -11,6 +11,8 @@
  *   classe e li invia al backend, che genera la firma con Claude.
  * - Ogni 15 minuti (6–23) invia al backend le mail nuove della casella della scuola: il backend fa valutare a Claude
  *   quali chiedono un adempimento al docente e solo quelle compaiono in Scadenze. Le altre vengono ignorate.
+ * - Ogni ora (6–23) invia al backend le verifiche dell'anno scolastico: i compiti del docente con "verifica" nel titolo
+ *   nelle quattro classi (sezione Verifiche dell'app).
  * Script Properties: ENDPOINT (URL /exec del backend personale), TOKEN (lo stesso del backend).
  * Setup: verifica() per autorizzare e controllare, poi installa().
  */
@@ -39,6 +41,8 @@ function verifica() {
   const snap = backendGet_();
   Logger.log('Backend raggiungibile · orario: ' + (snap.orario ? 'presente' : 'MANCANTE'));
   Logger.log('Invio stato classi: ' + JSON.stringify(inviaStato()));
+  try { const v = verifiche_(); Logger.log('Verifiche dell\'anno: %s · %s', v.length, v.map(x => x.classe + ' ' + x.data + ' ' + x.titolo).join(' | ')); Logger.log('Invio verifiche: ' + JSON.stringify(inviaVerifiche())); }
+  catch (e) { Logger.log('Verifiche → ERRORE: %s', e.message); }
   Object.keys(ARCHIVIO).forEach(t => { try { const a = archivio_(ARCHIVIO[t], mioId_()), es = esempiStile_(a); Logger.log('Archivio %s (%s): %s esercizi, %s soluzioni, esempi di stile letti: %s', t, ARCHIVIO[t].nota, a.length, a.soluzioni.length, es.map(x => x.nome).join(', ') || 'nessuno'); } catch (e) { Logger.log('Archivio %s → ERRORE: %s', t, e.message); } });
   try { Logger.log('Posta della scuola: %s mail negli ultimi 2 giorni', GmailApp.search(QUERY_POSTA + ' newer_than:2d', 0, 50).length); Logger.log('Invio posta: ' + JSON.stringify(postaScuola())); }
   catch (e) { Logger.log('Posta della scuola → ERRORE: %s', e.message); }
@@ -85,6 +89,7 @@ function ciclo() {
   const adesso = new Date(), h = Number(Utilities.formatDate(adesso, TZ, 'H')), m = Number(Utilities.formatDate(adesso, TZ, 'm'));
   if (m % 15 < 5) inviaStato();
   if (m % 15 < 5 && h >= 6 && h < 23) postaScuola();
+  if (m < 5 && h >= 6 && h < 23) inviaVerifiche();
   if (h >= 8 && h < 16) firmeDovute(); // rete di sicurezza se un trigger puntuale non è partito
   if (h >= 8 && h < 23) controllaReport();
 }
@@ -221,6 +226,34 @@ function streamDiff_(cls, da, a) {
   (Classroom.Courses.CourseWorkMaterials.list(id, { pageSize: 30, orderBy: 'updateTime desc' }).courseWorkMaterial || []).filter(dentro).forEach(x => out.push(base('materiale', x, x.description)));
   (Classroom.Courses.Announcements.list(id, { pageSize: 30, orderBy: 'updateTime desc' }).announcements || []).filter(dentro).forEach(x => out.push(base('annuncio', x, x.text)));
   return out.sort((p, q) => p.modificato.localeCompare(q.modificato));
+}
+
+/* ---------- verifiche ---------- */
+// Compiti del docente con "verifica" nel titolo, dal 1° settembre dell'anno scolastico in corso (esclusi i ripassi
+// e le esercitazioni di preparazione). Data della verifica = data di consegna se c'è, altrimenti di pubblicazione.
+const RE_VERIFICA = /verific/i, RE_NON_VERIFICA = /prepara|ripasso|simulaz|in vista/i;
+function verifiche_() {
+  const me = mioId_(), oggi = new Date(), out = [], g = d => [d.year, String(d.month).padStart(2, '0'), String(d.day).padStart(2, '0')].join('-');
+  const inizio = new Date(oggi.getMonth() >= 8 ? oggi.getFullYear() : oggi.getFullYear() - 1, 8, 1).toISOString();
+  Object.keys(CORSI).forEach(cls => {
+    let tok;
+    do {
+      const r = Classroom.Courses.CourseWork.list(CORSI[cls], { pageSize: 100, pageToken: tok });
+      (r.courseWork || []).filter(x => x.creatorUserId === me && x.creationTime >= inizio && RE_VERIFICA.test(x.title || '') && !RE_NON_VERIFICA.test(x.title || '')).forEach(x => {
+        const pubbl = new Date(x.scheduledTime || x.creationTime);
+        out.push({ id: x.id, classe: cls, titolo: x.title || '', data: x.dueDate ? g(x.dueDate) : iso_(pubbl),
+          pubblicata: Utilities.formatDate(pubbl, TZ, 'yyyy-MM-dd HH:mm'), scadenza: x.dueDate ? g(x.dueDate) : '',
+          testo: String(x.description || '').slice(0, 1500), allegati: allegati_(x), punti: x.maxPoints || null, link: x.alternateLink || '' });
+      });
+      tok = r.nextPageToken;
+    } while (tok);
+  });
+  return out.sort((a, b) => (a.data + a.pubblicata).localeCompare(b.data + b.pubblicata));
+}
+function inviaVerifiche() {
+  let verifiche = [], errore = null;
+  try { verifiche = verifiche_(); } catch (e) { errore = 'Classroom non raggiungibile: ' + e.message; }
+  return backendPost_({ azione: 'verifiche', verifiche, errore });
 }
 
 /* ---------- posta della scuola ---------- */
