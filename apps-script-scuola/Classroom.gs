@@ -101,7 +101,7 @@ function controllaReport() {
   const fatto = rep && (rep.generato || rep.inCorso) ? rep : null;
   if (fatto && fatto.inCorso && !fatto.generato) return; // generazione già in corso sul backend
   if (!fatto) { // una volta sola, dalle 15:00; se lo script era fermo, appena riparte
-    if (min >= REPORT_ORA_MIN) inviaReport_(o, target, 'nuovo');
+    if (min >= REPORT_ORA_MIN) inviaReport_(o, target, 'nuovo', null, verificheDel_(snap, dataT), inizioAnno_(snap));
     return;
   }
   // nuovo tentativo solo su richiesta del docente («Riprova» nell'app), per le sole classi finite in errore
@@ -109,15 +109,19 @@ function controllaReport() {
   const rich = fatto.riprova;
   if (inErrore.length && rich && rich.at !== P_().getProperty('RIPROVA_FATTA')) {
     P_().setProperty('RIPROVA_FATTA', rich.at);
-    inviaReport_(o, target, 'riprova', inErrore);
+    inviaReport_(o, target, 'riprova', inErrore, verificheDel_(snap, dataT), inizioAnno_(snap));
   }
 }
 // Ogni problema (Classroom illeggibile, backend che rifiuta) va al backend e compare nell'app; leggere Classroom non
 // consuma credito, quindi al giro successivo (5 minuti) si riprova da soli. Claude parte solo con un invio riuscito.
-function inviaReport_(o, target, tipo, soloClassi) {
+// Verifiche del docente in agenda ClasseViva per quel giorno (dallo snapshot del backend): per quelle classi il report
+// segnala solo la verifica ed elenca gli argomenti dell'anno da Classroom, senza Claude (la verifica la prepara il docente).
+const verificheDel_ = (snap, data) => ((snap.agenda && snap.agenda.eventi) || []).filter(e => e && e.verifica && e.data === data);
+const inizioAnno_ = snap => (snap.calendario && snap.calendario.inizio) || '2026-09-01';
+function inviaReport_(o, target, tipo, soloClassi, verifiche, inizio) {
   const data = iso_(target);
   let ctx;
-  try { ctx = contesto_(o, target); }
+  try { ctx = contesto_(o, target, verifiche || [], inizio); }
   catch (e) { Logger.log('Report per %s: Classroom non leggibile: %s', data, e.message); backendPost_({ azione: 'report_problema', data, errore: 'Classroom non leggibile dallo script della scuola: ' + e.message }); return; }
   const classi = soloClassi ? ctx.classi.filter(k => soloClassi.includes(k.classe)) : ctx.classi;
   const r = backendPost_({ azione: 'report', data, tipo, hash: ctx.hash, hashClassi: ctx.hashClassi, classi });
@@ -132,10 +136,15 @@ function prossimoGiorno_(o, d) {
 // Per ogni classe del giorno: ultimi contenuti dello stream del docente + archivio esercizi. Gli hash dello stream
 // (complessivo e per classe) restano nel report come riferimento.
 const md5_ = s => Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, s).map(x => ((x + 256) % 256).toString(16).padStart(2, '0')).join('');
-function contesto_(o, target) {
+function contesto_(o, target, verifiche, inizio) {
   const me = mioId_(), visti = [], classi = [], archivi = {}, esempi = {}, hashClassi = {};
   blocchi_(o, target).forEach(b => {
     const gia = classi.find(c => c.classe === b.cls); if (gia) { gia.ore = gia.ore.concat(b.ore); return; }
+    const ver = (verifiche || []).filter(e => e.classe === b.cls);
+    if (ver.length) { // giorno di verifica: niente stream né archivio, solo gli argomenti dell'anno
+      classi.push({ classe: b.cls, ore: b.ore.slice(), lab: b.lab, verifica: ver.map(e => ({ testo: String(e.testo || '').replace(/\s+/g, ' ').trim().slice(0, 300), ore: e.ore || [], giornata: !!e.giornata })), argomenti: argomentiAnno_(CORSI[b.cls], me, inizio) });
+      return;
+    }
     const recenti = stream_(CORSI[b.cls], me, 15);
     const vc = recenti.map(x => b.cls + x.id + x.agg); visti.push(...vc); hashClassi[b.cls] = md5_(vc.sort().join('|'));
     const tipo = b.cls.charAt(0) === '4' ? 'quarte' : 'quinte';
@@ -227,6 +236,26 @@ function streamDiff_(cls, da, a) {
   (Classroom.Courses.CourseWorkMaterials.list(id, { pageSize: 30, orderBy: 'updateTime desc' }).courseWorkMaterial || []).filter(dentro).forEach(x => out.push(base('materiale', x, x.description)));
   (Classroom.Courses.Announcements.list(id, { pageSize: 30, orderBy: 'updateTime desc' }).announcements || []).filter(dentro).forEach(x => out.push(base('annuncio', x, x.text)));
   return out.sort((p, q) => p.modificato.localeCompare(q.modificato));
+}
+
+/* Argomenti affrontati dall'inizio dell'anno: esercitazioni e materiali del docente su Classroom, raggruppati per
+   argomento di Classroom (o per mese, se non hanno argomento), in ordine di data. Le verifiche stesse sono escluse. */
+function argomentiAnno_(id, me, inizio) {
+  const nomi = {}; let tok;
+  do { const r = Classroom.Courses.Topics.list(id, { pageSize: 100, pageToken: tok }); (r.topic || []).forEach(t => { nomi[t.topicId] = t.name; }); tok = r.nextPageToken; } while (tok);
+  const voci = [], da = inizio + 'T00:00:00Z';
+  const prendi = x => { if (x.creatorUserId === me && x.creationTime >= da && !eVerifica_(x.title || '')) voci.push({ t: x.creationTime, titolo: (x.title || '').slice(0, 90), topic: x.topicId || '' }); };
+  tok = null; do { const r = Classroom.Courses.CourseWork.list(id, { pageSize: 100, pageToken: tok }); (r.courseWork || []).forEach(prendi); tok = r.nextPageToken; } while (tok);
+  tok = null; do { const r = Classroom.Courses.CourseWorkMaterials.list(id, { pageSize: 100, pageToken: tok }); (r.courseWorkMaterial || []).forEach(prendi); tok = r.nextPageToken; } while (tok);
+  voci.sort((p, q) => p.t.localeCompare(q.t));
+  const MESI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+  const gruppi = [], dm = t => Utilities.formatDate(new Date(t), TZ, 'dd/MM');
+  voci.forEach(v => {
+    const nome = nomi[v.topic] || 'Senza argomento · ' + MESI[Number(Utilities.formatDate(new Date(v.t), TZ, 'M')) - 1];
+    let g = gruppi.find(x => x.a === nome); if (!g) { g = { a: nome, dal: dm(v.t), al: dm(v.t), voci: [] }; gruppi.push(g); }
+    g.al = dm(v.t); g.voci.push(v.titolo);
+  });
+  return gruppi.slice(-30).map(g => { let t = g.voci.join(' · '); if (t.length > 400) t = t.slice(0, 397).replace(/ · [^·]*$/, '') + ' · …'; return { a: g.a, dal: g.dal, al: g.al, n: g.voci.length, voci: t }; });
 }
 
 /* ---------- verifiche ---------- */

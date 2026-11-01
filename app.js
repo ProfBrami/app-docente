@@ -563,9 +563,16 @@ function secReport(x, c) {
     const k = p && p.classi && p.classi[b.cls], compr = (k && k.con) || con[b.cls];
     const quando = `${oreLabel(b)} (${b.s.replace(/^0/, '')}–${b.e.replace(/^0/, '')})${b.lab ? ' · ' + b.lab : ''}${compr ? ' · con ' + compr : ''}`;
     let body;
-    const verC = verG.filter(e => e.classe === b.cls);
+    const verC = verG.filter(e => e.classe === b.cls && !(k && Array.isArray(k.verifica)));
     const verH = verC.map(e => `<div class="rep-warn"><b>Verifica in agenda ClasseViva</b> (${esc(oreVer(e))}): ${esc(String(e.testo || '').replace(/\s+/g, ' ').trim())}</div>`).join('');
-    if (k && !k.errore) {
+    if (k && Array.isArray(k.verifica)) { // giorno di verifica: solo l'avviso e gli argomenti dell'anno, nessun materiale prodotto
+      body = k.verifica.map(e => `<div class="rep-warn"><b>Verifica</b> (${esc(e.giornata ? 'tutto il giorno' : (e.ore || []).length ? e.ore.map(n => n + 'ª').join(', ') + ' ora' : 'dall\'agenda')}): ${esc(e.testo)}</div>`).join('')
+        + '<span class="small m62">Giorno di verifica: il report non prepara esercizi né soluzioni.</span>';
+      const arg = k.argomenti || [];
+      body += `<h4 class="rep-h">Argomenti affrontati dall'inizio dell'anno (da Classroom)</h4>` + (arg.length
+        ? `<ol class="rep-arg" style="margin:0;padding-left:20px;font-size:14px;display:grid;gap:6px">${arg.map(a => `<li><b>${esc(a.a)}</b> <span class="small m62">${esc(a.dal === a.al ? a.dal : a.dal + '–' + a.al)} · ${esc(a.n)} ${a.n === 1 ? 'contenuto' : 'contenuti'}</span>${a.voci ? `<br><span style="font-size:13px">${esc(a.voci)}</span>` : ''}</li>`).join('')}</ol>`
+        : '<span class="m62" style="font-size:13px">Nessun contenuto pubblicato su Classroom dall\'inizio dell\'anno.</span>');
+    } else if (k && !k.errore) {
       const rows = [['Argomento', [k.lang, k.arg].filter(Boolean).join(' – ')], ['Ultima cosa', k.ultimo], ['Prossimo passo', k.prossimo], ['Perché', k.motivo]].filter(r => r[1]);
       body = rows.length ? `<dl class="rep-dl">${rows.map(r => `<dt>${r[0]}</dt><dd>${esc(r[1])}</dd>`).join('')}</dl>` : '';
       if (k.avviso) body += `<div class="rep-warn">${/^avvis/i.test(k.avviso) ? '' : 'Avviso: '}${esc(k.avviso)}</div>`;

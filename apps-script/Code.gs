@@ -574,9 +574,14 @@ function elaboraReport() {
   if (!n) return;
   let s = ''; for (let i = 0; i < n; i++) s += c.get('RQ_' + i) || '';
   c.remove('RQ_n');
-  const b = JSON.parse(s), meta = { data: b.data, tipo: b.tipo || 'nuovo', hash: b.hash || '', hashClassi: b.hashClassi || null, classi: (b.classi || []).map(k => k.classe) };
+  const b = JSON.parse(s);
+  // giorno di verifica (agenda ClasseViva): la classe non va a Claude, si salvano solo la verifica e gli argomenti dell'anno
+  const conVerifica = (b.classi || []).filter(k => Array.isArray(k.verifica) && k.verifica.length), aClaude = (b.classi || []).filter(k => conVerifica.indexOf(k) < 0);
+  conVerifica.forEach(k => salvaReportClasse_(b.data, k.classe, { verifica: k.verifica, argomenti: k.argomenti || [] }));
+  const meta = { data: b.data, tipo: b.tipo || 'nuovo', hash: b.hash || '', hashClassi: b.hashClassi || null, classi: aClaude.map(k => k.classe), extra: conVerifica.map(k => k.classe) };
+  if (!aClaude.length) { chiudiReport_(meta, {}); return; }
   try {
-    const j = anthropic_('post', '/v1/messages/batches', { requests: b.classi.map(k => ({ custom_id: k.classe, params: corpoClaude_(richiestaReport_(b.data, k), true) })) });
+    const j = anthropic_('post', '/v1/messages/batches', { requests: aClaude.map(k => ({ custom_id: k.classe, params: corpoClaude_(richiestaReport_(b.data, k), true) })) });
     P_().setProperty('RB', JSON.stringify(Object.assign({ id: j.id, inviato: new Date().toISOString() }, meta)));
     c.put('RP', b.data + '|' + meta.tipo, CACHE_TTL);
     pianifica_('controllaBatchReport', 5 * 60e3);
@@ -613,13 +618,14 @@ function controllaBatchReport() {
 // 'riprova' e 'aggiornamento' delle 20 contengono solo alcune classi: le altre del report restano com'erano.
 function chiudiReport_(b, classi) {
   Object.keys(classi).forEach(k => salvaReportClasse_(b.data, k, classi[k]));
+  const tutte = Object.keys(classi).concat((b.extra || []).filter(k => !(k in classi))); // più le classi con verifica, già salvate
   const ora = new Date().toISOString(), prima = b.tipo !== 'nuovo' ? JSON.parse(P_().getProperty('R_' + b.data) || 'null') : null;
   if (prima) {
-    Object.keys(classi).forEach(k => { if (prima.classi.indexOf(k) < 0) prima.classi.push(k); });
+    tutte.forEach(k => { if (prima.classi.indexOf(k) < 0) prima.classi.push(k); });
     if (b.tipo === 'aggiornamento') { Object.assign(prima, { generato: ora, tipo: 'aggiornamento', hash: b.hash, hashClassi: b.hashClassi, controllo20: ora }); delete prima.nessunaModifica; }
     if (b.tipo === 'riprova') prima.riprovato = ora; // l'app capisce che il «Riprova» richiesto è stato eseguito
     P_().setProperty('R_' + b.data, JSON.stringify(prima));
-  } else P_().setProperty('R_' + b.data, JSON.stringify({ data: b.data, generato: ora, tipo: b.tipo, hash: b.hash, hashClassi: b.hashClassi, controllo20: b.tipo === 'aggiornamento' ? ora : null, classi: Object.keys(classi) }));
+  } else P_().setProperty('R_' + b.data, JSON.stringify({ data: b.data, generato: ora, tipo: b.tipo, hash: b.hash, hashClassi: b.hashClassi, controllo20: b.tipo === 'aggiornamento' ? ora : null, classi: tutte }));
   CacheService.getScriptCache().remove('RP');
   ritoccaSnap_();
 }
@@ -668,6 +674,7 @@ function salvaReportClasse_(data, cls, k) {
     if (t.length > 48000) g.desc = (g.desc ? g.desc + ' · ' : '') + 'troncato: file troppo lungo';
     return g;
   });
+  if (Array.isArray(copia.argomenti)) while (JSON.stringify(copia).length > 8900 && copia.argomenti.some(a => a.voci)) { const a = copia.argomenti.find(x => x.voci); a.voci = ''; } // prima si tolgono i titoli dei più vecchi
   P_().setProperty('RC_' + data + '_' + cls, JSON.stringify(copia).slice(0, 8900));
 }
 function leggiReportClasse_(data, cls) {
