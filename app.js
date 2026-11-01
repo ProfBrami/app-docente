@@ -87,12 +87,37 @@ const S = {
   done: ls.json(K.done, {}), mod: ls.json(K.mod, {}), coda: ls.json(K.coda, []), nascoste: ls.json(K.nascoste, []), lette: ls.json(K.lette, []), ultimaFirmata: 0, invio: null, invioErr: '', trascina: false, tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
   utLab: LABS[0], utText: '',
   variante: ls.get(K.variante, 'A'), tema: ls.get(K.tema, 'auto'),
-  pagina: '', credito: ls.json(K.credito, null), crUsd: '', crData: '',
+  pagina: '', menu: false, credito: ls.json(K.credito, null), crUsd: '', crData: '',
   ver: { dati: ls.json(K.verifiche, null), carico: false, err: '', at: 0 }, verSel: '', verClasse: '', verCorr: {}
 };
-// pagine oltre alla plancia: #verifiche, #spesa
-const PAGINE = [['', 'Plancia'], ['verifiche', 'Verifiche'], ['spesa', 'Spesa Claude']];
-const paginaDaHash = () => { const h = location.hash.slice(1); return PAGINE.some(([id]) => id && id === h) ? h : ''; };
+// Navigazione: «Oggi» è la schermata iniziale, ogni sezione ha la sua pagina (#firme, #verifiche, …).
+// Sul computer menu laterale, su iPhone/iPad barra in basso con le voci principali e «Menu» per le altre.
+const I = d => `<svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const ICONE = {
+  '': I('<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/>'),
+  orario: I('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'),
+  firme: I('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13 7l4 4"/>'),
+  report: I('<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>'),
+  circolari: I('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>'),
+  scadenze: I('<circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 2h6"/>'),
+  classi: I('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>'),
+  verifiche: I('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 13l2 2 4-4"/>'),
+  incarichi: I('<path d="M14.5 6.5a4 4 0 0 0-5.3 5.3L3 18l3 3 6.2-6.2a4 4 0 0 0 5.3-5.3l-2.5 2.5-2.5-2.5z"/>'),
+  note: I('<path d="M5 3h14v12l-6 6H5z"/><path d="M13 21v-6h6"/>'),
+  spesa: I('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+  impostazioni: I('<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>'),
+  menu: I('<path d="M4 6h16M4 12h16M4 18h16"/>')
+};
+const PAGINE = [
+  ['Giornata', [['', 'Oggi'], ['orario', 'Orario'], ['firme', 'Firme'], ['report', 'Report lezioni']]],
+  ['Scuola', [['circolari', 'Circolari'], ['scadenze', 'Scadenze'], ['classi', 'Classi'], ['verifiche', 'Verifiche']]],
+  ['Incarichi', [['incarichi', 'Ufficio tecnico e incarichi'], ['note', 'Note rapide']]],
+  ['Sistema', [['spesa', 'Spesa Claude'], ['impostazioni', 'Impostazioni']]]
+];
+const VOCI = PAGINE.flatMap(([, v]) => v), NOME_PAGINA = Object.fromEntries(VOCI);
+const GRUPPO = Object.fromEntries(PAGINE.flatMap(([g, v]) => v.map(([id]) => [id, g])));
+const TAB = ['', 'firme', 'report', 'verifiche']; // barra in basso (più «Menu»)
+const paginaDaHash = () => { const h = location.hash.slice(1); return h && h in NOME_PAGINA ? h : ''; };
 S.pagina = paginaDaHash();
 const collegato = () => S.mock || (ls.get(K.endpoint) && ls.get(K.token));
 
@@ -177,9 +202,7 @@ function render() {
 
   if (!collegato() || S.setup) root.innerHTML = renderSetup();
   else if (!S.data) root.innerHTML = renderAttesa();
-  else if (S.pagina === 'spesa') root.innerHTML = renderSpesa();
-  else if (S.pagina === 'verifiche') root.innerHTML = renderVerifiche();
-  else root.innerHTML = renderDashboard();
+  else root.innerHTML = renderApp();
 
   if (focusId) { const el = document.getElementById(focusId); if (el) { el.focus({ preventScroll: true }); if (sel && el.setSelectionRange) try { el.setSelectionRange(sel[0], sel[1]); } catch (e) {} el.scrollTop = top; } }
 }
@@ -241,7 +264,6 @@ function renderTop(now) {
         <span class="date-long">${GG[now.getDay()]} ${now.getDate()} ${MESI[now.getMonth()]} ${now.getFullYear()}</span>
       </div>
       <div class="row" style="align-items:flex-end;gap:10px">
-        ${S.data ? `<nav class="row menu" aria-label="Sezioni">${PAGINE.filter(([id]) => id !== S.pagina).map(([id, nome]) => `<button class="btn btn-secondary" data-act="pagina" data-id="${id}">${id ? nome : 'Torna alla plancia'}</button>`).join('')}</nav>` : ''}
         <button class="btn btn-secondary refresh${S.loading ? ' spin' : ''}" data-act="refresh" aria-label="Aggiorna i dati" title="Aggiorna (ricostruisce lo snapshot)" ${S.loading ? 'disabled' : ''}>${ICON_REFRESH}</button>
         <span class="clock">${hm(now)}</span>
       </div>
@@ -249,16 +271,13 @@ function renderTop(now) {
   </header>`;
 }
 
-function renderDashboard() {
-  COPIE = {}; FILE_REP = {};
+// Dati della giornata condivisi da tutte le pagine.
+function contesto() {
   const d = S.data, now = adesso(), M = modello(d);
   const mins = now.getHours() * 60 + now.getMinutes();
   const today = new Date(now); today.setHours(12, 0, 0, 0);
   const todayL = M.lessons(today), todayB = M.blocks(today);
   const autoFase = mins >= 360 && mins < 840 ? 'mattina' : mins >= 840 && mins < 1195 ? 'pomeriggio' : 'sera';
-  const fase = S.pin || autoFase;
-  const c = { o: {}, g: {}, fb: {}, k: {} };
-  ORDINI[fase].forEach((id, i) => { c.o[id] = i; c.g[id] = i === 0 ? '1 / -1' : 'auto'; c.fb[id] = i === 0 ? 'var(--color-accent)' : 'var(--color-divider)'; c.k[id] = i === 0 ? 'In evidenza ora · ' + NUM[id] : NUM[id]; });
   const nextDay = M.nextSchool(today), ndL = M.lessons(nextDay), ndLabel = GG[nextDay.getDay()] + ' ' + dmy(nextDay);
   const crOk = fonte('classroom').ok;
   const agg = d.meta.aggiornato ? new Date(d.meta.aggiornato) : null;
@@ -266,70 +285,114 @@ function renderDashboard() {
   const firmeOggi = (d.firme && d.firme[iso(today)]) || {};
   const fatta = b => { const k = iso(today) + '-' + b.first; return k in S.done ? !!S.done[k] : !!firmaRec(firmeOggi[String(b.first)]).firmata; };
   const rep = reportStato(d, M, today, mins);
-  const ctx = { d, now, M, mins, today, todayL, todayB, autoFase, fase, nextDay, ndL, ndLabel, crOk, agg, aggTxt, fatta, firmeOggi, rep };
+  return { d, now, M, mins, today, todayL, todayB, autoFase, fase: autoFase, nextDay, ndL, ndLabel, crOk, agg, aggTxt, fatta, firmeOggi, rep };
+}
+// c delle sezioni (ordine, colonna, bordo, occhiello) per una pagina con una o più sezioni.
+function cPagina(kicker) {
+  const c = { o: {}, g: {}, fb: {}, k: {} };
+  Object.keys(NUM).forEach(id => { c.o[id] = 0; c.g[id] = 'auto'; c.fb[id] = 'var(--color-divider)'; c.k[id] = kicker; });
+  return c;
+}
+// Contatori per menu e riquadri della schermata Oggi.
+function contatori(x) {
+  const oggi = iso(x.now), ver = (S.ver.dati && S.ver.dati.verifiche) || [];
+  return {
+    firme: x.todayB.filter(b => !x.fatta(b)).length,
+    circolari: circolariVisibili(x.d).filter(i => i.nuova).length,
+    scadenze: scadenzeOrdinate(x.d, x.today).filter(s => s.n >= 0 && s.n <= 7).length,
+    verifiche: ver.filter(v => v.data <= oggi && !verCorretta(v)).length
+  };
+}
 
-  /* barra Adesso */
-  let A = { k: 'Adesso', t: '', s: '', bg: 'transparent', fg: 'var(--color-text)', bd: 'var(--color-divider)' };
-  const cur = todayL.find(l => mins >= tm(l.s) && mins < tm(l.e)), nxt = todayL.find(l => tm(l.s) > mins);
-  if (!M.has) {
-    A = { ...A, k: FASI.find(f => f.id === autoFase).nome, t: 'Orario non disponibile', s: 'Nessun dato da orario.json: lo produce la skill orario-docente-promemoria nella cartella Drive “Dashboard Docente/dati”.' };
-  } else if (cur) {
-    const left = tm(cur.e) - mins, after = todayL.find(l => l.n === cur.n + 1);
-    if (left <= 5) A = { ...A, k: 'Firma ora', t: 'Fine ' + cur.n + 'ª ora tra ' + left + ' min: firma ' + cur.cls + ' su Classeviva', s: after ? 'Poi ' + after.n + 'ª ora · ' + after.cls + (after.lab ? ' · ' + after.lab : '') : 'Ultima ora della giornata', bg: 'var(--color-accent)', fg: 'var(--color-bg)', bd: 'var(--color-accent)' };
-    else A = { ...A, k: 'In corso', t: cur.n + 'ª ora · ' + cur.cls + (cur.lab ? ' · ' + cur.lab : ''), s: 'Termina alle ' + cur.e + ' · ' + (after ? 'poi ' + after.cls + (after.lab ? ' in ' + after.lab : '') : 'ultima ora') };
-  } else if (nxt) {
-    A = { ...A, k: 'Prossima', t: nxt.n + 'ª ora alle ' + nxt.s + ' · ' + nxt.cls + (nxt.lab ? ' · ' + nxt.lab : ''), s: mins < tm(todayL[0].s) ? 'Avviso consigliato: 30 min prima' : 'Intervallo in corso' };
-  } else if (!todayL.length) {
-    A = { ...A, k: 'Giorno libero', t: 'Nessuna lezione oggi', s: 'Prossime lezioni: ' + ndLabel + ' · ' + ndL.map(l => l.cls).join(', ') };
-  } else if (mins < 1195) {
-    const left = todayB.filter(b => !fatta(b)).length;
-    A = { ...A, k: mins < 840 ? 'Lezioni concluse' : 'Pomeriggio', t: left ? left + ' firme da apporre sul registro' : 'Tutte le firme di oggi sono apposte', s: 'Report di ' + rep.label + ': ' + rep.breve };
-  } else {
-    A = { ...A, k: 'Sera', t: 'Report lezioni di ' + rep.label + ': ' + rep.breve, s: ndL.map(l => l.n + 'ª ' + l.cls).join(' · ') };
-  }
+function renderApp() {
+  COPIE = {}; FILE_REP = {};
+  const x = contesto(), n = contatori(x), p = S.pagina;
+  const badge = { firme: n.firme, circolari: n.circolari, verifiche: n.verifiche };
+  const voce = ([id, nome]) => `<button class="nav-i${id === p ? ' on' : ''}" data-act="pagina" data-id="${id}"${id === p ? ' aria-current="page"' : ''}>${ICONE[id]}<span>${esc(nome)}</span>${badge[id] ? `<b class="nav-b">${badge[id]}</b>` : ''}</button>`;
+  const nav = `<nav class="nav${S.menu ? ' open' : ''}" aria-label="Sezioni">
+    <div class="nav-brand"><span class="nav-logo">PD</span><span class="col"><b>Progetto Docente</b><span class="small m60">Prof. Diego Caprini</span></span></div>
+    ${PAGINE.map(([g, v]) => `<div class="nav-g"><span class="nav-gt">${esc(g)}</span>${v.map(voce).join('')}</div>`).join('')}
+  </nav>${S.menu ? '<div class="nav-velo" data-act="menu"></div>' : ''}`;
+  const tab = `<nav class="tabbar" aria-label="Sezioni principali">${TAB.map(id => `<button class="tab-i${id === p && !S.menu ? ' on' : ''}" data-act="pagina" data-id="${id}">${ICONE[id]}<span>${esc(id ? NOME_PAGINA[id].split(' ')[0] : 'Oggi')}</span>${badge[id] ? `<b class="nav-b">${badge[id]}</b>` : ''}</button>`).join('')}
+    <button class="tab-i${S.menu ? ' on' : ''}" data-act="menu" aria-expanded="${S.menu}">${ICONE.menu}<span>Menu</span></button></nav>`;
 
-  const isB = S.variante === 'B';
-  const fasi = isB ? '' : `<nav class="fasi" aria-label="Fase della giornata">${FASI.map(f => `<button class="fase${f.id === fase ? ' on' : ''}" data-act="fase" data-id="${f.id}" aria-pressed="${f.id === fase}"><span class="fase-r">${f.range}</span><span class="fase-n">${f.nome}</span><span class="fase-d">${f.desc}</span></button>`).join('')}</nav>`;
-  const pinned = S.pin ? `<div class="pinned"><span>Vista fissata manualmente: ${esc(FASI.find(f => f.id === S.pin).nome)}.</span><button class="btn btn-ghost" data-act="unpin">Torna automatica</button></div>` : '';
+  const fonti = FONTI.map(([id]) => fonte(id)), ko = fonti.filter(f => !f.ok).length;
+  const agg = x.agg && !isNaN(x.agg) ? (S.offline ? 'Offline · dati del ' + dmy(x.agg) + ' ' + hm(x.agg) : 'Aggiornato alle ' + hm(x.agg) + (iso(x.agg) !== iso(x.now) ? ' del ' + dmy(x.agg) : '')) : '';
+  const bar = `<header class="bar">
+    <div class="bar-l"><span class="kicker">${p ? esc(GRUPPO[p]) : 'IIS “F. Ciusa” · Nuoro · B016'}</span><h1>${p ? esc(NOME_PAGINA[p]) : saluto(x.now)}</h1>
+      <span class="small m62">${GG[x.now.getDay()]} ${x.now.getDate()} ${MESI[x.now.getMonth()]} ${x.now.getFullYear()}${agg ? ' · ' + esc(agg) : ''}</span></div>
+    <div class="bar-r">
+      ${S.mock ? '<span class="tag tag-neutral">Mock</span>' : ''}${SIM.ora || SIM.data ? '<span class="tag tag-outline">Ora simulata</span>' : ''}
+      <button class="chip${ko ? ' ko' : ''}" data-act="pagina" data-id="impostazioni" title="${esc(FONTI.map(([id, nome], i) => nome + ': ' + (fonti[i].ok ? 'ok' : fonti[i].errore || 'non raggiungibile')).join('\n'))}"><i></i>${ko ? ko + (ko === 1 ? ' fonte non raggiungibile' : ' fonti non raggiungibili') : 'Fonti collegate'}</button>
+      <button class="btn btn-secondary refresh${S.loading ? ' spin' : ''}" data-act="refresh" aria-label="Aggiorna i dati" title="Aggiorna (ricostruisce lo snapshot)" ${S.loading ? 'disabled' : ''}>${ICON_REFRESH}</button>
+      <span class="clock">${hm(x.now)}</span>
+    </div></header>`;
 
   const avvisi = [];
   if (S.offline) avvisi.push(alertBox(`<strong>Offline.</strong> Mostro gli ultimi dati salvati (${esc(S.cachedAt ? dmy(new Date(S.cachedAt)) + ' ' + hm(new Date(S.cachedAt)) : 'data sconosciuta')}). ${esc(S.error || '')}`));
   else if (S.error) avvisi.push(alertBox(`<strong>Aggiornamento non riuscito.</strong> ${esc(S.error)} <button class="btn btn-ghost" data-act="setup">Modifica collegamento</button>`));
 
-  return `<div class="wrap">
-    ${renderTop(now)}
-    ${avvisi.join('')}
-    <div class="blueprint now" style="background:${A.bg};color:${A.fg};border-color:${A.bd}">${CORNERS}
-      <span class="now-k">${esc(A.k)}</span><span class="now-t">${esc(A.t)}</span><span class="now-s">${esc(A.s)}</span>
-    </div>
-    ${fasi}${pinned}
-    <div class="body">
-      ${isB ? renderTimeline(ctx) : ''}
-      <main class="grid">
-        ${secOrario(ctx, c)}${secFirme(ctx, c)}${secReport(ctx, c)}${secCircolari(ctx, c)}${secScadenze(ctx, c)}
-        ${secClassi(ctx, c)}${secRicond(ctx, c)}${secOrient(ctx, c)}${secUT(ctx, c)}${secNote(ctx, c)}
-      </main>
-    </div>
-    ${renderFoot()}
-  </div><div class="ptr tag tag-accent" id="ptr" aria-hidden="true">Rilascia per aggiornare</div>`;
+  const c = cPagina(p ? GRUPPO[p] : '');
+  const pagina = !p ? renderOggi(x, n)
+    : p === 'orario' ? secOrario(x, c) : p === 'firme' ? secFirme(x, c) : p === 'report' ? secReport(x, c)
+    : p === 'circolari' ? secCircolari(x, c) : p === 'scadenze' ? secScadenze(x, c) : p === 'classi' ? secClassi(x, c)
+    : p === 'note' ? secNote(x, c) : p === 'incarichi' ? `<div class="pg-g">${secUT(x, c)}${secRicond(x, c)}${secOrient(x, c)}</div>`
+    : p === 'verifiche' ? renderVerifiche() : p === 'spesa' ? renderSpesa() : renderImpostazioni();
+  return `<div class="app">${nav}<div class="main">${bar}${avvisi.join('')}<main class="pg pg-${p || 'oggi'}">${pagina}</main></div>${tab}</div>
+    <div class="ptr tag tag-accent" id="ptr" aria-hidden="true">Rilascia per aggiornare</div>`;
+}
+const saluto = d => (d.getHours() < 13 ? 'Buongiorno' : d.getHours() < 18 ? 'Buon pomeriggio' : 'Buonasera') + ', prof.';
+
+// Schermata Oggi: cosa succede adesso, riquadri con i numeri della giornata, giornata e sezione utile in questo momento.
+function renderOggi(x, n) {
+  const { M, mins, todayL, todayB, ndL, ndLabel, rep, fatta, autoFase } = x;
+  let A = { k: 'Adesso', t: '', s: '', on: false };
+  const cur = todayL.find(l => mins >= tm(l.s) && mins < tm(l.e)), nxt = todayL.find(l => tm(l.s) > mins);
+  if (!M.has) A = { ...A, t: 'Orario non disponibile', s: 'Nessun dato da orario.json: lo produce la skill orario-docente-promemoria nella cartella Drive “Dashboard Docente/dati”.' };
+  else if (cur) {
+    const left = tm(cur.e) - mins, after = todayL.find(l => l.n === cur.n + 1);
+    A = left <= 5 ? { k: 'Firma ora', t: 'Fine ' + cur.n + 'ª ora tra ' + left + ' min: firma ' + cur.cls, s: after ? 'Poi ' + after.n + 'ª ora · ' + after.cls + (after.lab ? ' · ' + after.lab : '') : 'Ultima ora della giornata', on: true }
+      : { k: 'In corso', t: cur.n + 'ª ora · ' + cur.cls + (cur.lab ? ' · ' + cur.lab : ''), s: 'Termina alle ' + cur.e + ' · ' + (after ? 'poi ' + after.cls + (after.lab ? ' in ' + after.lab : '') : 'ultima ora'), on: true };
+  } else if (nxt) A = { ...A, k: 'Prossima ora', t: nxt.n + 'ª ora alle ' + nxt.s + ' · ' + nxt.cls + (nxt.lab ? ' · ' + nxt.lab : ''), s: mins < tm(todayL[0].s) ? 'Prima ora della giornata' : 'Intervallo in corso' };
+  else if (!todayL.length) A = { ...A, k: 'Giorno libero', t: 'Nessuna lezione oggi', s: 'Prossime lezioni: ' + ndLabel + (ndL.length ? ' · ' + [...new Set(ndL.map(l => l.cls))].join(', ') : '') };
+  else if (mins < 1195) { const left = todayB.filter(b => !fatta(b)).length; A = { ...A, k: 'Lezioni concluse', t: left ? left + (left === 1 ? ' firma da apporre' : ' firme da apporre') + ' sul registro' : 'Tutte le firme di oggi sono apposte', s: 'Report di ' + rep.label + ': ' + rep.breve }; }
+  else A = { ...A, k: 'Sera', t: 'Report lezioni di ' + rep.label + ': ' + rep.breve, s: ndL.map(l => l.n + 'ª ' + l.cls).join(' · ') };
+
+  const hero = `<section class="hero${A.on ? ' on' : ''}"><span class="hero-k">${esc(A.k)}</span><span class="hero-t">${esc(A.t)}</span><span class="hero-s">${esc(A.s)}</span></section>`;
+  const prossima = scadenzeOrdinate(x.d, x.today).find(s => s.n >= 0 && s.n < 99);
+  const tile = (id, num, lab, sub) => `<button class="tile" data-act="pagina" data-id="${id}"><span class="tile-i">${ICONE[id]}</span><span class="tile-n">${num}</span><span class="tile-l">${esc(lab)}</span><span class="tile-s">${esc(sub)}</span></button>`;
+  const tiles = `<div class="tiles">
+    ${tile('firme', todayB.length ? todayB.length - n.firme + '/' + todayB.length : '—', 'Firme di oggi', todayB.length ? (n.firme ? n.firme + ' da apporre' : 'tutte apposte') : 'nessuna lezione')}
+    ${tile('report', rep.pronto ? '✓' : '…', 'Report lezioni', rep.label + ' · ' + rep.breve)}
+    ${tile('circolari', n.circolari, n.circolari === 1 ? 'Circolare nuova' : 'Circolari nuove', n.circolari ? 'da leggere' : 'nessuna da leggere')}
+    ${tile('scadenze', n.scadenze, 'Scadenze in 7 giorni', prossima ? 'prossima: ' + prossima.dd + ' · ' + prossima.t : 'nessuna in vista')}
+    ${tile('verifiche', n.verifiche, 'Verifiche da correggere', n.verifiche ? 'apri per correggere' : 'tutte corrette')}
+  </div>`;
+  // sezione utile adesso: mattina l'orario, pomeriggio le firme, sera il report
+  const c = cPagina('In evidenza adesso'), evid = autoFase === 'mattina' ? secOrario(x, c) : autoFase === 'pomeriggio' ? secFirme(x, c) : secReport(x, c);
+  return `${hero}${tiles}<div class="oggi-g">${renderTimeline(x)}<div class="col" style="gap:20px;min-width:0">${evid}</div></div>`;
+}
+
+function renderImpostazioni() {
+  return `<div class="pg-g">${renderFoot()}</div>`;
 }
 
 function renderTimeline(x) {
-  const { mins, todayL, todayB, autoFase, ndLabel, ndL, M, today } = x;
+  const { mins, todayL, todayB, ndLabel, ndL, M, today } = x;
   const tl = todayL.map(l => { const st = mins >= tm(l.e) ? 'done' : mins >= tm(l.s) ? 'now' : 'next'; return { time: l.s, label: l.n + 'ª ora · ' + l.cls, sub: (l.lab ? l.lab + ' · ' : '') + 'firma alle ' + l.e + ' · bozza alle ' + hhmm(tm(l.e) + PRONTA), st }; });
   tl.push({ time: '14:00', label: 'Firme registro', sub: !M.has ? 'Orario non disponibile' : todayB.length ? todayB.filter(b => !x.fatta(b)).length + ' firme da apporre · bozze 5 min dopo ogni ora' : 'Nessuna lezione oggi', st: mins >= 1195 ? 'done' : mins >= 840 ? 'now' : 'next', pick: 'pomeriggio' });
   tl.push({ time: x.rep.pronto ? hm(new Date(x.rep.pronto.generato)) : '18:00', label: 'Report lezioni', sub: 'Per ' + x.rep.label + ' · ' + x.rep.breve, st: x.rep.pronto ? 'now' : 'next', pick: 'sera' });
   const li = tl.map(t => {
     const dot = t.st === 'now' ? 'var(--color-accent)' : t.st === 'done' ? 'color-mix(in srgb,var(--color-accent) 35%,transparent)' : 'transparent';
-    const attrs = t.pick ? ` class="click" data-act="pickfase" data-id="${t.pick}" data-auto="${autoFase}" role="button" tabindex="0"` : '';
+    const attrs = t.pick ? ` class="click" data-act="pagina" data-id="${t.pick === 'pomeriggio' ? 'firme' : 'report'}" role="button" tabindex="0"` : '';
     return `<li${attrs} style="opacity:${t.st === 'done' ? 0.5 : 1}"><span class="tl-time">${t.time}</span><span class="tl-dot" style="background:${dot}"></span><span class="col" style="min-width:0"><span class="tl-l">${esc(t.label)}</span><span class="small m62">${esc(t.sub)}</span></span></li>`;
   }).join('');
-  return `<aside class="blueprint side">${CORNERS}
-    <div class="col" style="gap:2px"><span class="kicker">Giornata</span><h3 style="margin:0;font-size:24px">${GG[today.getDay()]} ${dmy(today)}</h3></div>
+  return `<section class="blueprint sec giornata">${CORNERS}
+    <div class="col" style="gap:2px"><span class="kicker">La tua giornata</span><h3>${GG[today.getDay()]} ${dmy(today)}</h3></div>
     ${M.has ? '' : empty('Nessun dato da orario.json', 'Le ore di lezione compariranno quando l\'orario è su Drive.')}
     <ol class="plain tl">${li}</ol>
     <div class="side-next"><span class="kicker">Prossimo giorno di scuola</span><span class="hd" style="font-size:18px">${esc(ndLabel)}</span><span style="font-size:13px">${esc(ndL.map(l => l.n + 'ª ' + l.cls + (l.lab ? ' · ' + l.lab : '')).join('  ·  '))}</span></div>
-  </aside>`;
+  </section>`;
 }
 
 function secOrario(x, c) {
@@ -519,15 +582,19 @@ document.addEventListener('dragstart', e => {
 });
 document.addEventListener('dragend', () => { if (S.trascinoFile) { S.trascinoFile = false; render(); } });
 
-function secCircolari(x, c) {
-  const { d, aggTxt } = x, g = fonte('gmail');
+function circolariVisibili(d) {
   const jobs = Array.isArray(d.documenti) ? d.documenti : [];
   const analizzate = new Set(jobs.flatMap(j => ((j.analisi && j.analisi.circolari) || []).map(z => String(z.numero || '').replace(/\D/g, ''))).filter(Boolean));
   const numero = t => (String(t).match(/circ\.?\s*(\d+)/i) || [])[1];
   // "Segna come letta": vale subito sul dispositivo, poi il backend la segna come letta anche in Gmail
-  const items = (Array.isArray(d.circolari) ? d.circolari : []).filter(i => !(i.id && S.nascoste.includes(i.id)) && !analizzate.has(numero(i.titolo)))
+  return (Array.isArray(d.circolari) ? d.circolari : []).filter(i => !(i.id && S.nascoste.includes(i.id)) && !analizzate.has(numero(i.titolo)))
     .filter(i => !(i.id && daClasseviva(i) && S.lette.includes(i.id))) // notifica ClasseViva letta = cestinata: esce dall'elenco
     .map(i => i.nuova && i.id && S.lette.includes(i.id) ? { ...i, nuova: false } : i);
+}
+function secCircolari(x, c) {
+  const { d, aggTxt } = x, g = fonte('gmail');
+  const jobs = Array.isArray(d.documenti) ? d.documenti : [];
+  const items = circolariVisibili(d);
   const nNew = items.filter(i => i.nuova).length;
   const tagCls = r => (r === 'Informativa' || r === 'Completato' || r === 'Non di competenza') ? 'tag-neutral' : (r === 'Adempimento' || r === 'Da aprire') ? 'tag-outline' : 'tag-accent';
   let inner = head('circolari', c, 'Circolari', `<span class="tag tag-accent">${items.length ? (nNew ? nNew + ' nuove' : 'Nessuna nuova') : '—'}</span>`);
@@ -572,15 +639,17 @@ function renderJob(j) {
   return h + '</div>';
 }
 
-function secScadenze(x, c) {
-  const { d, today } = x;
+function scadenzeOrdinate(d, today) {
   const t0 = new Date(iso(today) + 'T12:00:00');
-  const list = (Array.isArray(d.scadenze) ? d.scadenze : []).filter(s => !(s.id && S.nascoste.includes(s.id))).map(s => {
+  return (Array.isArray(d.scadenze) ? d.scadenze : []).filter(s => !(s.id && S.nascoste.includes(s.id))).map(s => {
     if (!s.d) return { ...s, n: 99, dd: '—', count: 'senza data', col: 'var(--color-accent-700)', w: 500 };
     const dt = new Date(s.d + 'T12:00:00'); if (isNaN(dt)) return null;
     const n = Math.round((dt - t0) / 864e5);
     return { ...s, n, dd: dmy(dt), count: n < 0 ? 'scaduta' : n === 0 ? 'oggi' : n === 1 ? 'domani' : 'tra ' + n + ' gg', col: n <= 1 ? 'var(--color-accent-700)' : 'color-mix(in srgb,var(--color-text) 60%,transparent)', w: n <= 2 ? 700 : 400 };
   }).filter(s => s && s.n >= -1).sort((a, b) => a.n - b.n);
+}
+function secScadenze(x, c) {
+  const { d, today } = x, list = scadenzeOrdinate(d, today);
   let inner = `<header class="sec-h"><div><span class="kicker">${esc(c.k.scadenze)}</span><h3>Scadenze e adempimenti</h3></div></header>`;
   const gm = fonte('gmail'), ca = fonte('calendar'), ps = fonte('posta_scuola');
   if (!list.length) inner += (gm.ok || ca.ok || ps.ok) ? empty('Nessuna scadenza in vista', 'Da posta e Calendar non risultano adempimenti nei prossimi giorni.') : empty('Nessun dato da Gmail e Calendar', [gm.errore, ca.errore].filter(Boolean).join(' · '));
@@ -651,12 +720,11 @@ function secNote(x, c) {
 function renderFoot() {
   const seg = (name, val, opts) => `<div class="seg" role="radiogroup" aria-label="${name}">${opts.map(([v, l]) => `<label class="seg-opt"><input type="radio" name="${name}" value="${v}" data-set="${name}"${v === val ? ' checked' : ''}>${l}</label>`).join('')}</div>`;
   const fonti = S.data && S.data.meta && S.data.meta.fonti ? Object.entries(S.data.meta.fonti) : [];
-  return `<footer class="foot">
-    <div class="foot-g"><span class="kicker">Vista</span>${seg('variante', S.variante, [['A', 'A · Plancia'], ['B', 'B · Giornata']])}</div>
+  return `<section class="blueprint sec foot">${CORNERS}
     <div class="foot-g"><span class="kicker">Tema</span>${seg('tema', S.tema, [['auto', 'Automatico'], ['light', 'Chiaro'], ['dark', 'Scuro']])}</div>
     <div class="foot-g" style="flex:1 1 260px"><span class="kicker">Stato fonti</span><ul class="plain fonti">${fonti.map(([k, f]) => `<li><span class="tag ${f.ok ? 'tag-accent' : 'tag-outline'}">${esc(k)}</span><span class="m65">${f.ok ? esc(f.letti || 0) + ' elementi letti' : esc(f.errore || 'non raggiungibile')}</span></li>`).join('') || '<li class="m65">—</li>'}</ul></div>
     <div class="foot-g"><span class="kicker">Collegamento</span><div class="row"><button class="btn btn-ghost" data-act="setup">Modifica collegamento</button><button class="btn btn-ghost" data-act="scollega">Scollega</button></div></div>
-  </footer>`;
+  </section>`;
 }
 
 /* ---------- pagina Spesa Claude ---------- */
@@ -673,7 +741,7 @@ const dmyIso = g => g.slice(8, 10) + '/' + g.slice(5, 7) + '/' + g.slice(0, 4);
 function renderSpesa() {
   const sp = S.data.spesa, now = adesso(), oggi = iso(now);
   const blocco = (titolo, kicker, html, largo) => `<section class="blueprint sec"${largo ? ' style="grid-column:1 / -1"' : ''}>${CORNERS}<header class="sec-h"><div><span class="kicker">${esc(kicker)}</span><h3>${titolo}</h3></div></header>${html}</section>`;
-  if (!sp) return `<div class="wrap">${renderTop(now)}<div class="blueprint state">${CORNERS}<h3>Spesa Claude</h3>${empty('Nessun dato di spesa dal backend', 'Incolla il nuovo Code.gs nell\'editor di Apps Script e pubblica una nuova versione del deployment: il conteggio parte dalla chiamata a Claude successiva.')}</div></div>`;
+  if (!sp) return `<div class="blueprint state">${CORNERS}<h3>Spesa Claude</h3>${empty('Nessun dato di spesa dal backend', 'Incolla il nuovo Code.gs nell\'editor di Apps Script e pubblica una nuova versione del deployment: il conteggio parte dalla chiamata a Claude successiva.')}</div>`;
   const giorni = sp.giorni || {}, totMese = totVoci(sp.voci), totPrec = totVoci(sp.mesePrec && sp.mesePrec.voci);
   // media giornaliera degli ultimi 14 giorni contati (dal primo giorno di conteggio)
   const ultimi = Array.from({ length: 14 }, (_, i) => iso(addDays(now, -i))).filter(g => !sp.dal || g >= sp.dal);
@@ -728,7 +796,7 @@ function renderSpesa() {
     <li><b>Posta della scuola</b> con ${esc(NOMI_MODELLI[m.posta] || m.posta || '')}: circa 40 volte più economico di Opus.</li>
     <li><b>Circolari e moduli</b> restano su ${esc(NOMI_MODELLI[m.circolari] || m.circolari || 'Opus')}: partono solo quando trascini un documento.</li></ul>`);
 
-  return `<div class="wrap">${renderTop(now)}<main class="grid">${html}</main></div>`;
+  return `<div class="grid">${html}</div>`;
 }
 function salvaCredito() {
   const usd = Number(String(S.crUsd || (document.getElementById('cr-usd') || {}).value || '').replace(',', '.'));
@@ -738,7 +806,7 @@ function salvaCredito() {
 }
 function vaiPagina(p) {
   if (p) location.hash = p; else history.pushState(null, '', location.pathname + location.search);
-  S.pagina = p; scrollTo(0, 0); render();
+  S.pagina = p; S.menu = false; scrollTo(0, 0); render();
   if (p === 'verifiche') caricaVerifiche();
 }
 ['hashchange', 'popstate'].forEach(ev => addEventListener(ev, () => { S.pagina = paginaDaHash(); render(); if (S.pagina === 'verifiche') caricaVerifiche(); }));
@@ -840,15 +908,14 @@ function renderVerifiche() {
       ${safeUrl(scelta.link) ? `<div class="row"><a class="btn btn-ghost" href="${safeUrl(scelta.link)}" target="_blank" rel="noopener">Apri in Classroom</a></div>` : ''}`;
   } else dx = empty('Scegli una verifica dall\'elenco.');
 
-  return `<div class="wrap">${renderTop(now)}
-    <div class="ver-h"><div><span class="kicker">Verifiche · anno scolastico ${now.getMonth() >= 8 ? now.getFullYear() + '/' + String(now.getFullYear() + 1).slice(2) : now.getFullYear() - 1 + '/' + String(now.getFullYear()).slice(2)}</span>
+  return `<div class="ver-h"><div><span class="kicker">Verifiche · anno scolastico ${now.getMonth() >= 8 ? now.getFullYear() + '/' + String(now.getFullYear() + 1).slice(2) : now.getFullYear() - 1 + '/' + String(now.getFullYear()).slice(2)}</span>
       <h2 class="hd">${tutte.length} verifiche${S.verClasse ? ' · ' + elenco.length + ' della ' + esc(S.verClasse) : ''}</h2>
       <span class="small m62">${esc(stato)}</span></div>
       <button class="btn btn-secondary" data-act="ver-aggiorna" title="Rilegge le verifiche da Classroom" ${S.ver.attesa ? 'disabled' : ''}>${S.ver.attesa ? 'Aggiornamento in corso…' : 'Aggiorna'}</button></div>
     <div class="ver">
       <section class="blueprint sec ver-sx" aria-label="Elenco delle verifiche">${CORNERS}${sx}</section>
       <section class="blueprint sec ver-dx" id="ver-dettaglio" aria-live="polite">${CORNERS}${dx}</section>
-    </div></div>`;
+    </div>`;
 }
 
 /* ---------- firme: modifica, copia, invio al backend ---------- */
@@ -995,7 +1062,8 @@ document.addEventListener('click', e => {
   const a = el.dataset.act, id = el.dataset.id;
   if (a === 'copy') copia(el.dataset.key);
   else if (a === 'refresh') carica(true);
-  else if (a === 'pagina') vaiPagina(id);
+  else if (a === 'pagina') vaiPagina(id || '');
+  else if (a === 'menu') { S.menu = !S.menu; render(); }
   else if (a === 'credito') salvaCredito();
   else if (a === 'ver-sel') { S.verSel = id; render(); if (matchMedia('(max-width:860px)').matches) { const d = document.getElementById('ver-dettaglio'); if (d) d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }
   else if (a === 'ver-classe') { S.verClasse = id; S.verSel = ''; render(); }
@@ -1046,7 +1114,8 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'ut-text') { e.preventDefault(); addTicket(); }
-  if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset && e.target.dataset.act === 'pickfase') { e.preventDefault(); e.target.click(); }
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset && (e.target.dataset.act === 'pickfase' || (e.target.dataset.act === 'pagina' && e.target.tagName === 'LI'))) { e.preventDefault(); e.target.click(); }
+  if (e.key === 'Escape' && S.menu) { S.menu = false; render(); }
 });
 document.addEventListener('input', e => {
   const t = e.target;
@@ -1082,7 +1151,7 @@ document.addEventListener('submit', async e => {
 function modelloFase() { const n = adesso(), m = n.getHours() * 60 + n.getMinutes(); return m >= 360 && m < 840 ? 'mattina' : m >= 840 && m < 1195 ? 'pomeriggio' : 'sera'; }
 
 /* ---------- ciclo di vita ---------- */
-if (S.pagina === 'verifiche') caricaVerifiche();
+if (S.pagina === 'verifiche' || (collegato() && !S.ver.dati)) caricaVerifiche(); // anche per il contatore delle verifiche da correggere
 setInterval(() => {
   if (S.setup || !collegato()) return;
   if (document.visibilityState === 'visible' && verificheInAttesa()) caricaVerifiche();
