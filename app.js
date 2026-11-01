@@ -553,11 +553,18 @@ function secReport(x, c) {
     `Il ${GG[tg.getDay()]} hai ${ore.length} ${ore.length === 1 ? 'ora' : 'ore'}${libere.length && ore.length ? (libere.length === 1 ? '; la ' + libere[0] + ' è libera' : '; libere: ' + libere.join(', ')) : ''}.`,
     p ? 'Solo contenuti pubblicati da te su Classroom. Trascina i file nella cartella o nel post di Classroom, oppure usa Scarica / Copia.' : ''].filter(Boolean).join(' ');
   inner += `<p class="rep-pre m70">${esc(premessa)}</p>`;
+  // tue verifiche del giorno dall'agenda ClasseViva (agenda.json del sabato): avviso in cima e nella scheda della classe
+  const verG = ((x.d.agenda && x.d.agenda.eventi) || []).filter(e => e && e.verifica && e.data === iso(tg));
+  const oreVer = e => e.giornata ? 'tutto il giorno' : e.ore && e.ore.length ? e.ore.map(n => n + 'ª').join(', ') + ' ora' : (e.inizio || '');
+  if (verG.length) inner += alertBox(`<strong>${verG.length === 1 ? 'Verifica' : verG.length + ' verifiche'} in agenda ClasseViva ${esc(dataCorta)}:</strong> ${verG.map(e => esc(e.classe + ' (' + oreVer(e) + ')')).join(', ')}. Prepara il testo e i materiali.`);
+  else if (fonte('classeviva').ok === false) inner += `<span class="small m62">Verifiche in agenda: ${esc(fonte('classeviva').errore || 'agenda ClasseViva non disponibile')}.</span>`;
   const con = (x.d.orario && x.d.orario.compresenza) || {};
   const cards = blocchi.map(b => {
     const k = p && p.classi && p.classi[b.cls], compr = (k && k.con) || con[b.cls];
     const quando = `${oreLabel(b)} (${b.s.replace(/^0/, '')}–${b.e.replace(/^0/, '')})${b.lab ? ' · ' + b.lab : ''}${compr ? ' · con ' + compr : ''}`;
     let body;
+    const verC = verG.filter(e => e.classe === b.cls);
+    const verH = verC.map(e => `<div class="rep-warn"><b>Verifica in agenda ClasseViva</b> (${esc(oreVer(e))}): ${esc(String(e.testo || '').replace(/\s+/g, ' ').trim())}</div>`).join('');
     if (k && !k.errore) {
       const rows = [['Argomento', [k.lang, k.arg].filter(Boolean).join(' – ')], ['Ultima cosa', k.ultimo], ['Prossimo passo', k.prossimo], ['Perché', k.motivo]].filter(r => r[1]);
       body = rows.length ? `<dl class="rep-dl">${rows.map(r => `<dt>${r[0]}</dt><dd>${esc(r[1])}</dd>`).join('')}</dl>` : '';
@@ -566,7 +573,7 @@ function secReport(x, c) {
       if (Array.isArray(k.files)) body += k.files.map((f, i) => repFile(f, b.cls + '-' + b.first + '-' + i)).join('');
     } else if (k && k.errore) body = `<span class="m62" style="font-size:13px">Report non generato per la ${esc(b.cls)}: ${esc(k.errore)}</span>`;
     else body = `<span class="m62" style="font-size:13px">${p ? 'Classe non presente nel report.' : 'Argomento, prossimo passo, testo da pubblicare e file compariranno con il report.'}</span>`;
-    return `<article class="rep-card"><div class="rep-when"><span class="rep-cls">${esc(b.cls)}</span><span>${esc(quando)}</span></div>${body}</article>`;
+    return `<article class="rep-card"><div class="rep-when"><span class="rep-cls">${esc(b.cls)}</span><span>${esc(quando)}</span></div>${verH}${body}</article>`;
   });
   inner += cards.length ? `<div class="rep-list">${cards.join('')}</div>` : '<p style="margin:0;font-size:14px">Nessuna lezione in programma.</p>';
   if (p && p.fonti) inner += `<p class="small m62" style="margin:0">Fonti: ${esc(p.fonti)}</p>`;
