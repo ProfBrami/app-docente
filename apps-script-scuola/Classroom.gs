@@ -2,10 +2,10 @@
  * Script Classroom — da creare con l'account della SCUOLA (quello che vede i corsi Classroom).
  * Solo lettura su Classroom: non pubblica, non modifica, non commenta nulla.
  * - Ogni 15 minuti invia al backend personale lo stato delle classi (ultimo contenuto, esercitazione aperta).
- * - Ogni 5 minuti controlla se tutte le firme di oggi sono segnate come firmate (o se sono le 18): allora invia il
- *   contesto delle classi del prossimo giorno di scuola e il backend compila il Report lezioni. Alle 20 ricontrolla
- *   gli stream e fa rigenerare solo le classi il cui stream è cambiato. Le classi finite in errore vengono richieste di nuovo
- *   (al più RIPROVE_MAX volte per giorno di report).
+ * - Dalle 15:00 (ogni 5 minuti finché non riesce, quindi anche appena lo script torna attivo) invia il contesto delle
+ *   classi del prossimo giorno di lezione (calendario scolastico dal backend) e il backend compila il Report lezioni,
+ *   una volta sola. Nessun nuovo tentativo automatico che consumi credito: le classi finite in errore si richiedono
+ *   solo quando il docente preme «Riprova» nell'app. Se Classroom non si legge, il problema va al backend e nell'app.
  * - Ogni mattina alle 6 programma un'esecuzione 5 minuti dopo la fine di ogni blocco di ore (orario dal backend);
  *   a quell'ora raccoglie i contenuti dello stream creati o modificati dal docente dalla lezione precedente della
  *   classe e li invia al backend, che genera la firma con Claude.
@@ -23,9 +23,7 @@ const ARCHIVIO = {
   quinte: { corso: '546864434898', topic: '717560957883', nota: 'vecchia 5B · LINGUAGGIO SQL', ext: /\.sql$/i }
 };
 const ESEMPI_MAX = 4; // soluzioni del docente passate a Claude come esempi di stile
-const REPORT_ORA_MIN = 18 * 60;  // se non tutte le firme risultano firmate, il report parte comunque alle 18:00
-const CONTROLLO_ORA_MIN = 20 * 60; // alle 20:00 si ricontrollano gli stream
-const RIPROVE_MAX = 2; // nuovi tentativi per le classi del report finite in errore
+const REPORT_ORA_MIN = 15 * 60;  // il report del prossimo giorno di lezione parte alle 15:00
 const TZ = 'Europe/Rome';
 const PRONTA_MIN = 5;
 const P_ = () => PropertiesService.getScriptProperties();
@@ -58,7 +56,7 @@ function installa() {
 /* Programma le esecuzioni di oggi: 5 minuti dopo la fine di ogni blocco di ore consecutive nella stessa classe. */
 function programma() {
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'firmeDovute').forEach(t => ScriptApp.deleteTrigger(t));
-  const o = backendGet_().orario;
+  const o = orarioCal_(backendGet_());
   if (!o || !o.settimana) throw new Error('orario non disponibile dal backend (orario.json su Drive)');
   const oggi = new Date(), blocchi = blocchi_(o, oggi);
   P_().setProperty('OGGI', JSON.stringify({ data: iso_(oggi), blocchi, orario: o }));
@@ -96,40 +94,43 @@ function ciclo() {
 
 /* ---------- report lezioni ---------- */
 function controllaReport() {
-  const snap = backendGet_(), o = snap.orario; if (!o || !o.settimana) return;
-  const adesso = new Date(), oggi = iso_(adesso), min = adesso.getHours() * 60 + adesso.getMinutes();
+  const snap = backendGet_(), o = orarioCal_(snap); if (!o || !o.settimana) return;
+  const adesso = new Date(), min = adesso.getHours() * 60 + adesso.getMinutes();
   const target = prossimoGiorno_(o, adesso); if (!target) return;
   const dataT = iso_(target), rep = snap.report && snap.report.data === dataT ? snap.report : null;
-  const firme = (snap.firme || {})[oggi] || {}, bl = blocchi_(o, adesso);
-  const tutteFirmate = bl.length > 0 && bl.every(b => firme[String(b.first)] && firme[String(b.first)].firmata);
-  if (rep && rep.inCorso && !rep.generato) return; // generazione già in corso sul backend
-  const inErrore = rep && !rep.inCorso ? Object.keys(rep.classi || {}).filter(k => rep.classi[k] && rep.classi[k].errore) : [];
-  const riprove = Number(P_().getProperty('RIPROVE_' + dataT) || 0);
-  if (!rep) {
-    if (tutteFirmate || min >= REPORT_ORA_MIN) inviaReport_(o, target, 'nuovo');
-  } else if (inErrore.length && riprove < RIPROVE_MAX) {
-    P_().setProperty('RIPROVE_' + dataT, String(riprove + 1));
-    const ctx = contesto_(o, target);
-    inviaReport_(o, target, 'riprova', { hash: rep.hash, hashClassi: rep.hashClassi, classi: ctx.classi.filter(k => inErrore.includes(k.classe)) });
-  } else if (min >= CONTROLLO_ORA_MIN && !rep.controllo20 && !(rep.generato && new Date(rep.generato).getHours() * 60 + new Date(rep.generato).getMinutes() >= CONTROLLO_ORA_MIN)) {
-    const ctx = contesto_(o, target);
-    // solo le classi il cui stream è cambiato (i report fatti prima di hashClassi: tutte)
-    const cambiate = ctx.hash === rep.hash ? [] : ctx.classi.filter(k => !rep.hashClassi || ctx.hashClassi[k.classe] !== rep.hashClassi[k.classe]);
-    if (cambiate.length) inviaReport_(o, target, 'aggiornamento', { hash: ctx.hash, hashClassi: ctx.hashClassi, classi: cambiate });
-    else backendPost_({ azione: 'report_verificato', data: dataT });
+  const fatto = rep && (rep.generato || rep.inCorso) ? rep : null;
+  if (fatto && fatto.inCorso && !fatto.generato) return; // generazione già in corso sul backend
+  if (!fatto) { // una volta sola, dalle 15:00; se lo script era fermo, appena riparte
+    if (min >= REPORT_ORA_MIN) inviaReport_(o, target, 'nuovo');
+    return;
+  }
+  // nuovo tentativo solo su richiesta del docente («Riprova» nell'app), per le sole classi finite in errore
+  const inErrore = Object.keys(fatto.classi || {}).filter(k => fatto.classi[k] && fatto.classi[k].errore);
+  const rich = fatto.riprova;
+  if (inErrore.length && rich && rich.at !== P_().getProperty('RIPROVA_FATTA')) {
+    P_().setProperty('RIPROVA_FATTA', rich.at);
+    inviaReport_(o, target, 'riprova', inErrore);
   }
 }
-function inviaReport_(o, target, tipo, ctx) {
-  ctx = ctx || contesto_(o, target);
-  const r = backendPost_({ azione: 'report', data: iso_(target), tipo, hash: ctx.hash, hashClassi: ctx.hashClassi, classi: ctx.classi });
-  Logger.log('Report %s per %s: %s', tipo, iso_(target), JSON.stringify(r));
+// Ogni problema (Classroom illeggibile, backend che rifiuta) va al backend e compare nell'app; leggere Classroom non
+// consuma credito, quindi al giro successivo (5 minuti) si riprova da soli. Claude parte solo con un invio riuscito.
+function inviaReport_(o, target, tipo, soloClassi) {
+  const data = iso_(target);
+  let ctx;
+  try { ctx = contesto_(o, target); }
+  catch (e) { Logger.log('Report per %s: Classroom non leggibile: %s', data, e.message); backendPost_({ azione: 'report_problema', data, errore: 'Classroom non leggibile dallo script della scuola: ' + e.message }); return; }
+  const classi = soloClassi ? ctx.classi.filter(k => soloClassi.includes(k.classe)) : ctx.classi;
+  const r = backendPost_({ azione: 'report', data, tipo, hash: ctx.hash, hashClassi: ctx.hashClassi, classi });
+  Logger.log('Report %s per %s: %s', tipo, data, JSON.stringify(r));
+  if (!r || r.errore) backendPost_({ azione: 'report_problema', data, errore: 'il backend non ha accettato la richiesta: ' + ((r && r.errore) || 'nessuna risposta') });
 }
+// Prossimo giorno con lezioni (salta domeniche, festività e sospensioni del calendario scolastico).
 function prossimoGiorno_(o, d) {
-  for (let i = 1; i <= 10; i++) { const x = new Date(d.getTime() + i * 864e5); if (blocchi_(o, x).length) return x; }
+  for (let i = 1; i <= 20; i++) { const x = new Date(d.getTime() + i * 864e5); if (blocchi_(o, x).length) return x; }
   return null;
 }
 // Per ogni classe del giorno: ultimi contenuti dello stream del docente + archivio esercizi. Gli hash dello stream
-// (complessivo e per classe) servono al controllo delle 20.
+// (complessivo e per classe) restano nel report come riferimento.
 const md5_ = s => Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, s).map(x => ((x + 256) % 256).toString(16).padStart(2, '0')).join('');
 function contesto_(o, target) {
   const me = mioId_(), visti = [], classi = [], archivi = {}, esempi = {}, hashClassi = {};
@@ -296,7 +297,17 @@ function postaScuola() {
 }
 
 /* ---------- orario ---------- */
+// L'orario settimanale con il calendario scolastico del backend (giorni senza lezioni).
+function orarioCal_(snap) { return snap.orario ? Object.assign({}, snap.orario, { calendario: snap.calendario || null }) : null; }
+function senzaLezioni_(o, d) {
+  const c = o.calendario; if (!c) return null;
+  const g = iso_(d);
+  if ((c.inizio && g < c.inizio) || (c.fine && g > c.fine)) return 'fuori dall\'anno scolastico';
+  const s = (c.sospensioni || []).find(x => g >= x.da && g <= x.a);
+  return s ? s.motivo : null;
+}
 function blocchi_(o, d) {
+  if (senzaLezioni_(o, d)) return [];
   const x = o.settimana[String(d.getDay())] || {}, out = [];
   (o.ore || []).filter(h => x[h.n]).forEach(h => {
     const b = out[out.length - 1];

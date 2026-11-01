@@ -32,6 +32,22 @@ const MODELLO_FIRME = 'claude-sonnet-5-5'; // testo breve nello stile del docent
 const MODELLO_POSTA = 'claude-haiku-5-5';  // smistamento delle mail della scuola: circa 40 volte più economico
 const CR_MAX_ETA = 45 * 60e3; // oltre, lo stato Classroom inviato dalla scuola è considerato vecchio
 const P_ = () => PropertiesService.getScriptProperties();
+// Calendario scolastico 2026/27 (circ. 14 del 9/9/2026): giorni senza lezioni oltre alle domeniche. Va nello snapshot:
+// l'app lo usa per l'orario e per avvisare dei giorni di festa, lo script della scuola per scegliere il giorno del report.
+const CALENDARIO = {
+  inizio: '2026-09-12', fine: '2027-06-08',
+  sospensioni: [
+    { da: '2026-11-02', a: '2026-11-02', motivo: 'Commemorazione dei defunti' },
+    { da: '2026-12-07', a: '2026-12-07', motivo: 'sospensione delle lezioni (delibera del C.d.I.)' },
+    { da: '2026-12-08', a: '2026-12-08', motivo: 'Immacolata Concezione' },
+    { da: '2026-12-23', a: '2027-01-06', motivo: 'vacanze di Natale' },
+    { da: '2027-02-09', a: '2027-02-09', motivo: 'martedì di Carnevale' },
+    { da: '2027-03-25', a: '2027-03-30', motivo: 'vacanze di Pasqua' },
+    { da: '2027-04-26', a: '2027-04-30', motivo: 'ponte di fine aprile (28/4 Sa die de sa Sardigna)' },
+    { da: '2027-05-01', a: '2027-05-01', motivo: 'Festa dei lavoratori' },
+    { da: '2027-06-02', a: '2027-06-02', motivo: 'Festa della Repubblica' }
+  ]
+};
 
 /* ---------- da eseguire a mano dall'editor ---------- */
 function creaToken() {
@@ -80,6 +96,8 @@ function doPost(e) {
     if (b.azione === 'firmata') return json_(segnaFirmata_(b));
     if (b.azione === 'report') return json_(riceviReport_(b));
     if (b.azione === 'report_verificato') return json_(reportVerificato_(b));
+    if (b.azione === 'report_problema') return json_(problemaReport_(b));
+    if (b.azione === 'riprova_report') return json_(riprovaReport_(b));
     if (b.azione === 'nascondi') return json_(nascondiCircolare_(b));
     if (b.azione === 'letta') return json_(segnaLetta_(b));
     if (b.azione === 'documenti') return json_(riceviDocumenti_(b));
@@ -126,7 +144,8 @@ function aggiorna() {
       orientamento: cal.orientamento,
       classi: unisciClassi_(cr.classi, extra.classi),
       firme: firmeSnap_(extra.firme),
-      orario: extra.orario || null
+      orario: extra.orario || null,
+      calendario: CALENDARIO
     };
     scriviSnap_(snap);
     return snap;
@@ -413,6 +432,7 @@ function ritoccaSnap_() { // aggiorna firme e classi nello snapshot senza rilegg
   const ex = JSON.parse(CacheService.getScriptCache().get('extra') || '{}'), cr = statoClassroom_();
   snap.firme = firmeSnap_(ex.firme);
   snap.report = reportSnap_();
+  snap.calendario = CALENDARIO;
   snap.spesa = spesaSnap_();
   snap.documenti = documentiSnap_();
   snap.supplenze = { ore: unisciSupplenze_(ex.supplenze) };
@@ -524,7 +544,10 @@ function verificheSnap_() {
 }
 
 /* ---------- report lezioni ---------- */
-// b: { data (giorno del report), tipo: 'nuovo'|'aggiornamento'|'riprova' (solo le classi finite in errore), hash, classi: [{ classe, ore[], lab, recenti[], archivio[], noteArchivio }] }
+// Si genera una volta sola, alle 15:00 (o appena lo script della scuola torna attivo), per il prossimo giorno di lezione.
+// Niente nuovi tentativi automatici: se una classe finisce in errore, l'app lo mostra e il docente preme «Riprova» (REP_RIPROVA).
+// Problemi prima dell'invio (Classroom illeggibile, script della scuola fermo) arrivano con report_problema (REP_PROBLEMA).
+// b: { data (giorno del report), tipo: 'nuovo'|'riprova' (solo le classi finite in errore), hash, classi: [{ classe, ore[], lab, recenti[], archivio[], noteArchivio }] }
 // La generazione dura minuti: si salva la richiesta e la si elabora in un'esecuzione separata (trigger tra pochi secondi).
 function riceviReport_(b) {
   const c = CacheService.getScriptCache();
@@ -539,6 +562,7 @@ function riceviReport_(b) {
   c.put('RQ_n', String(n), 3600);
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'elaboraReport').forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('elaboraReport').timeBased().after(5000).create();
+  P_().deleteProperty('REP_PROBLEMA');
   ritoccaSnap_();
   return { ok: true, inCoda: true };
 }
@@ -593,10 +617,21 @@ function chiudiReport_(b, classi) {
   if (prima) {
     Object.keys(classi).forEach(k => { if (prima.classi.indexOf(k) < 0) prima.classi.push(k); });
     if (b.tipo === 'aggiornamento') { Object.assign(prima, { generato: ora, tipo: 'aggiornamento', hash: b.hash, hashClassi: b.hashClassi, controllo20: ora }); delete prima.nessunaModifica; }
+    if (b.tipo === 'riprova') prima.riprovato = ora; // l'app capisce che il «Riprova» richiesto è stato eseguito
     P_().setProperty('R_' + b.data, JSON.stringify(prima));
   } else P_().setProperty('R_' + b.data, JSON.stringify({ data: b.data, generato: ora, tipo: b.tipo, hash: b.hash, hashClassi: b.hashClassi, controllo20: b.tipo === 'aggiornamento' ? ora : null, classi: Object.keys(classi) }));
   CacheService.getScriptCache().remove('RP');
   ritoccaSnap_();
+}
+function problemaReport_(b) {
+  P_().setProperty('REP_PROBLEMA', JSON.stringify({ data: b.data || null, errore: String(b.errore || 'errore sconosciuto').slice(0, 300), at: new Date().toISOString() }));
+  ritoccaSnap_(); return { ok: true };
+}
+function riprovaReport_(b) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.data || ''))) return { errore: 'data mancante' };
+  const r = { data: b.data, at: new Date().toISOString() };
+  P_().setProperty('REP_RIPROVA', JSON.stringify(r)); ritoccaSnap_();
+  return { ok: true, richiesta: r.at };
 }
 function reportVerificato_(b) {
   const r = JSON.parse(P_().getProperty('R_' + b.data) || 'null'); if (!r) return { errore: 'report inesistente' };
@@ -608,10 +643,13 @@ function reportSnap_() { // il report più recente con data da oggi in poi
   const oggi = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
   const date = Object.keys(P_().getProperties()).filter(k => /^R_\d{4}-\d{2}-\d{2}$/.test(k) && k.slice(2) >= oggi).map(k => k.slice(2)).sort();
   const inCorso = (CacheService.getScriptCache().get('RP') || '').split('|')[0];
-  if (!date.length) return inCorso ? { data: inCorso, inCorso: true, classi: {} } : null;
-  const r = JSON.parse(P_().getProperty('R_' + date[date.length - 1])), out = Object.assign({}, r, { classi: {} });
+  const problema = JSON.parse(P_().getProperty('REP_PROBLEMA') || 'null'), riprova = JSON.parse(P_().getProperty('REP_RIPROVA') || 'null');
+  const chiaveOk = !!P_().getProperty('ANTHROPIC_API_KEY');
+  if (!date.length) return inCorso || problema || !chiaveOk ? { data: inCorso || (problema && problema.data) || null, inCorso: !!inCorso, classi: {}, problema, chiaveMancante: !chiaveOk } : null;
+  const r = JSON.parse(P_().getProperty('R_' + date[date.length - 1])), out = Object.assign({}, r, { classi: {}, problema, chiaveMancante: !chiaveOk });
   r.classi.forEach(k => { out.classi[k] = leggiReportClasse_(r.data, k); });
   if (inCorso && inCorso >= r.data) out.inCorso = inCorso;
+  if (riprova && riprova.data === r.data) out.riprova = riprova;
   return out;
 }
 function puliziaReport_() {

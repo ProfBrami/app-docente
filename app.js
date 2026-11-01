@@ -165,13 +165,23 @@ function modello(data) {
   const sett = o && o.settimana && typeof o.settimana === 'object' && Object.keys(o.settimana).length ? o.settimana : null;
   const ore = o && Array.isArray(o.ore) && o.ore.length ? o.ore : ORE_SCUOLA;
   const lab = (o && o.lab) || {};
-  const lessons = d => { if (!sett) return []; const x = sett[d.getDay()] || {}; return ore.filter(h => x[h.n]).map(h => ({ ...h, cls: x[h.n], lab: lab[x[h.n]] || '' })); };
+  // calendario scolastico dal backend: motivo del giorno senza lezioni (festività, vacanze, sospensioni), altrimenti null
+  const cal = data && data.calendario;
+  const festa = d => {
+    if (!cal) return null;
+    const g = iso(d);
+    if ((cal.inizio && g < cal.inizio) || (cal.fine && g > cal.fine)) return 'fuori dall\'anno scolastico';
+    const s = (cal.sospensioni || []).find(x => g >= x.da && g <= x.a);
+    return s ? s.motivo : null;
+  };
+  const settimanali = d => { if (!sett) return []; const x = sett[d.getDay()] || {}; return ore.filter(h => x[h.n]).map(h => ({ ...h, cls: x[h.n], lab: lab[x[h.n]] || '' })); };
+  const lessons = d => festa(d) ? [] : settimanali(d);
   const blocks = d => { const out = []; lessons(d).forEach(l => { const b = out[out.length - 1]; if (b && b.cls === l.cls && b.last === l.n - 1) { b.last = l.n; b.e = l.e; b.num++; } else out.push({ cls: l.cls, lab: l.lab, first: l.n, last: l.n, s: l.s, e: l.e, num: 1 }); }); return out; };
   const nextSchool = d => {
-    for (let i = 1; i < 10; i++) { const x = addDays(d, i); if (sett ? lessons(x).length : x.getDay() !== 0) return x; }
+    for (let i = 1; i < 21; i++) { const x = addDays(d, i); if (sett ? lessons(x).length : x.getDay() !== 0 && !festa(x)) return x; }
     return addDays(d, 1);
   };
-  return { has: !!sett, ore, lessons, blocks, nextSchool, vigore: o && o.vigore };
+  return { has: !!sett, ore, lessons, settimanali, festa, blocks, nextSchool, vigore: o && o.vigore };
 }
 
 /* ---------- componenti ---------- */
@@ -331,6 +341,9 @@ function renderApp() {
   const avvisi = [];
   if (S.offline) avvisi.push(alertBox(`<strong>Offline.</strong> Mostro gli ultimi dati salvati (${esc(S.cachedAt ? dmy(new Date(S.cachedAt)) + ' ' + hm(new Date(S.cachedAt)) : 'data sconosciuta')}). ${esc(S.error || '')}`));
   else if (S.error) avvisi.push(alertBox(`<strong>Aggiornamento non riuscito.</strong> ${esc(S.error)} <button class="btn btn-ghost" data-act="setup">Modifica collegamento</button>`));
+  const domani = addDays(x.today, 1), festaDomani = x.M.festa(domani);
+  if (festaDomani && domani.getDay() !== 0 && !/^fuori/.test(festaDomani))
+    avvisi.push(alertBox(`<strong>Domani, ${GG[domani.getDay()]} ${dmy(domani)}, niente lezione:</strong> ${esc(festaDomani)}. Prossimo giorno di scuola: ${esc(x.ndLabel)}.`));
 
   const c = cPagina(p ? GRUPPO[p] : '');
   const pagina = !p ? renderOggi(x, n)
@@ -354,7 +367,7 @@ function renderOggi(x, n) {
     A = left <= 5 ? { k: 'Firma ora', t: 'Fine ' + cur.n + 'ª ora tra ' + left + ' min: firma ' + cur.cls, s: after ? 'Poi ' + after.n + 'ª ora · ' + after.cls + (after.lab ? ' · ' + after.lab : '') : 'Ultima ora della giornata', on: true }
       : { k: 'In corso', t: cur.n + 'ª ora · ' + cur.cls + (cur.lab ? ' · ' + cur.lab : ''), s: 'Termina alle ' + cur.e + ' · ' + (after ? 'poi ' + after.cls + (after.lab ? ' in ' + after.lab : '') : 'ultima ora'), on: true };
   } else if (nxt) A = { ...A, k: 'Prossima ora', t: nxt.n + 'ª ora alle ' + nxt.s + ' · ' + nxt.cls + (nxt.lab ? ' · ' + nxt.lab : ''), s: mins < tm(todayL[0].s) ? 'Prima ora della giornata' : 'Intervallo in corso' };
-  else if (!todayL.length) A = { ...A, k: 'Giorno libero', t: 'Nessuna lezione oggi', s: 'Prossime lezioni: ' + ndLabel + (ndL.length ? ' · ' + [...new Set(ndL.map(l => l.cls))].join(', ') : '') };
+  else if (!todayL.length) A = { ...A, k: 'Giorno libero', t: M.festa(x.today) ? 'Niente lezione oggi: ' + M.festa(x.today) : 'Nessuna lezione oggi', s: 'Prossime lezioni: ' + ndLabel + (ndL.length ? ' · ' + [...new Set(ndL.map(l => l.cls))].join(', ') : '') };
   else if (mins < 1195) { const left = todayB.filter(b => !fatta(b)).length; A = { ...A, k: 'Lezioni concluse', t: left ? left + (left === 1 ? ' firma da apporre' : ' firme da apporre') + ' sul registro' : 'Tutte le firme di oggi sono apposte', s: 'Report di ' + rep.label + ': ' + rep.breve }; }
   else A = { ...A, k: 'Sera', t: 'Report lezioni di ' + rep.label + ': ' + rep.breve, s: ndL.map(l => l.n + 'ª ' + l.cls).join(' · ') };
 
@@ -381,7 +394,7 @@ function renderTimeline(x) {
   const { mins, todayL, todayB, ndLabel, ndL, M, today } = x;
   const tl = todayL.map(l => { const st = mins >= tm(l.e) ? 'done' : mins >= tm(l.s) ? 'now' : 'next'; return { time: l.s, label: l.n + 'ª ora · ' + l.cls, sub: (l.lab ? l.lab + ' · ' : '') + 'firma alle ' + l.e + ' · bozza alle ' + hhmm(tm(l.e) + PRONTA), st }; });
   tl.push({ time: '14:00', label: 'Firme registro', sub: !M.has ? 'Orario non disponibile' : todayB.length ? todayB.filter(b => !x.fatta(b)).length + ' firme da apporre · bozze 5 min dopo ogni ora' : 'Nessuna lezione oggi', st: mins >= 1195 ? 'done' : mins >= 840 ? 'now' : 'next', pick: 'pomeriggio' });
-  tl.push({ time: x.rep.pronto ? hm(new Date(x.rep.pronto.generato)) : '18:00', label: 'Report lezioni', sub: 'Per ' + x.rep.label + ' · ' + x.rep.breve, st: x.rep.pronto ? 'now' : 'next', pick: 'sera' });
+  tl.push({ time: x.rep.pronto ? hm(new Date(x.rep.pronto.generato)) : '15:00', label: 'Report lezioni', sub: 'Per ' + x.rep.label + ' · ' + x.rep.breve, st: x.rep.pronto ? 'now' : 'next', pick: 'sera' });
   const li = tl.map(t => {
     const dot = t.st === 'now' ? 'var(--color-accent)' : t.st === 'done' ? 'color-mix(in srgb,var(--color-accent) 35%,transparent)' : 'transparent';
     const attrs = t.pick ? ` class="click" data-act="pagina" data-id="${t.pick === 'pomeriggio' ? 'firme' : 'report'}" role="button" tabindex="0"` : '';
@@ -410,7 +423,8 @@ function secOrario(x, c) {
     const ls_ = M.lessons(d), byN = {}; ls_.forEach(l => { byN[l.n] = l; });
     const suppGiorno = supp.filter(o => o.data === iso(d)), verGiorno = ver.filter(e => e.data === iso(d));
     const label = i === 0 ? 'Oggi' : i === 1 ? 'Domani' : G3[d.getDay()] + ' ' + d.getDate();
-    const cells = !ls_.length && !suppGiorno.length ? '<span class="og-free m60">Giorno libero</span>' : M.ore.map(h => {
+    const fg_ = M.festa(d);
+    const cells = !ls_.length && !suppGiorno.length ? `<span class="og-free m60">${fg_ ? '<b>Niente lezione</b> · ' + esc(fg_) : 'Giorno libero'}</span>` : M.ore.map(h => {
       const su = suppGiorno.find(o => Number(o.ora) === h.n);
       if (su) { // supplenza a mio carico: bordo tratteggiato accento, al posto della cella normale
         suppInVista = true;
@@ -486,7 +500,9 @@ function secFirme(x, c) {
   return sec('firme', c, inner);
 }
 
-// Stato del report: quello pronto per il prossimo giorno di scuola, oppure in attesa/in preparazione.
+// Stato del report: quello pronto per il prossimo giorno di lezione, oppure in attesa/in preparazione/con un problema.
+// Si genera una volta sola alle 15:00 (o appena lo script della scuola torna attivo); nessun nuovo tentativo automatico.
+const REPORT_ORA = 15 * 60;
 function reportStato(d, M, today, mins) {
   const todayL = M.lessons(today), fine = todayL.length ? tm(todayL[todayL.length - 1].e) : 0;
   const r = d.report || null, oggiIso = iso(today);
@@ -494,11 +510,18 @@ function reportStato(d, M, today, mins) {
   const target = r && r.data === oggiIso && r.generato && mins < fine ? today : M.nextSchool(today);
   const tIso = iso(target), pronto = r && r.data === tIso && r.generato ? r : null;
   const inCorso = !!(r && (r.inCorso === tIso || (r.data === tIso && r.inCorso)));
-  const testi = (d.firme && d.firme[oggiIso]) || {};
-  const mancano = M.blocks(today).filter(b => { const k = oggiIso + '-' + b.first; return !(k in S.done ? S.done[k] : firmaRec(testi[String(b.first)]).firmata); }).length;
-  const breve = pronto ? 'pronto' : inCorso ? 'in preparazione' : mancano ? 'appena segni le ' + mancano + ' firme mancanti (al più tardi alle 18:00)' : M.blocks(today).length ? 'in preparazione' : 'alle 18:00';
-  return { target, label: GG[target.getDay()] + ' ' + dmy(target), pronto, inCorso, mancano, breve };
+  const problema = r && r.problema && r.problema.data === tIso ? r.problema : null;
+  const errori = pronto ? Object.keys(pronto.classi || {}).filter(k => pronto.classi[k] && pronto.classi[k].errore) : [];
+  const rich = pronto && pronto.riprova, attesaRiprova = !!(rich && rich.at > (pronto.riprovato || pronto.generato) && !inCorso);
+  const ritardo = !pronto && !inCorso && mins >= REPORT_ORA; // dopo le 15:00 il report doveva essere partito
+  const breve = pronto ? (errori.length ? 'non generato per ' + errori.join(', ') : 'pronto') : inCorso ? 'in preparazione'
+    : ritardo ? (problema ? 'non partito: c\'è un problema' : 'in ritardo') : 'alle 15:00';
+  return { target, label: GG[target.getDay()] + ' ' + dmy(target), pronto, inCorso, problema, errori, attesaRiprova, ritardo, breve, chiaveMancante: !!(r && r.chiaveMancante) };
 }
+// Cosa fare per un errore di Claude: il credito esaurito si risolve ricaricando, il resto con «Riprova».
+const consiglioErrore = e => /credit balance|billing|credit/i.test(e || '') ? 'Credito Anthropic esaurito: ricarica dalla Console di Anthropic, poi premi «Riprova».'
+  : /api[_ ]key|authentication|401/i.test(e || '') ? 'Chiave ANTHROPIC_API_KEY non valida: controllala nelle Proprietà script del backend, poi premi «Riprova».'
+  : 'Premi «Riprova» per rigenerare solo le classi in errore.';
 
 // Impaginazione come l'artefatto "Report lezioni": barra di stato, premessa, una scheda per classe
 // (argomento, ultima cosa, prossimo passo, avviso, testo da pubblicare) e i file trascinabili.
@@ -509,21 +532,27 @@ function secReport(x, c) {
   if (!M.has) return sec('report', c, head('report', c, esc(titolo)) + empty('Nessun dato da orario.json', 'Il report parte dalle classi e dai laboratori dell\'orario.') + cmdFooter('report', true));
   const p = rep.pronto, blocchi = M.blocks(tg), ore = M.lessons(tg);
   const gen = p && new Date(p.generato), quando = d0 => GG[d0.getDay()] + ' ' + dmy(d0) + '/' + d0.getFullYear() + ' ore ' + hm(d0);
-  const stato = p ? [p.controllo20 ? (p.nessunaModifica ? 'VERIFICATO alle ' + hm(new Date(p.controllo20)) + ': nessuna modifica' : 'AGGIORNATO alle ' + hm(new Date(p.controllo20))) : 'COMPLETO',
+  const stato = p ? [rep.errori.length ? 'INCOMPLETO' : 'COMPLETO',
       'Giorno-obiettivo: ' + dataLunga, 'generato ' + quando(gen), 'dati di Classroom aggiornati ' + (iso(gen) === iso(today) ? 'ad oggi' : 'al ' + dmy(gen)) + ' (sola lettura)'].join(' · ')
     : (rep.inCorso ? 'IN PREPARAZIONE' : 'IN ATTESA') + ' · Giorno-obiettivo: ' + dataLunga;
   let inner = head('report', c, esc(titolo));
-  inner += `<div class="rep-st${p ? ' ok' : ''}" role="status">${esc(stato)}</div>`;
+  inner += `<div class="rep-st${p && !rep.errori.length ? ' ok' : ''}" role="status">${esc(stato)}</div>`;
+  const crF = fonte('classroom'), dataCorta = GG[tg.getDay()] + ' ' + dmy(tg);
+  if (rep.chiaveMancante) inner += alertBox('<strong>Manca la chiave di Claude.</strong> Inserisci <code>ANTHROPIC_API_KEY</code> nelle Proprietà script del backend: senza, il report non può partire.');
   if (!p) inner += alertBox(rep.inCorso ? '<strong>Report in preparazione.</strong> Passa dalla Batch API di Claude (metà prezzo): compare qui di solito entro un\'ora.'
-    : rep.mancano ? `<strong>Il report si prepara appena tutte le firme di oggi risultano firmate</strong> (ne mancano ${rep.mancano}); al più tardi alle 18:00. Sotto: classi e laboratori dall'orario.`
-    : '<strong>Il report si prepara entro pochi minuti</strong> (oggi senza lezioni: alle 18:00).');
+    : rep.problema ? `<strong>Il report non è partito.</strong> ${esc(rep.problema.errore)} (alle ${esc(hm(new Date(rep.problema.at)))}). Lo script della scuola riprova da solo ogni 5 minuti: la lettura di Classroom non consuma credito, Claude parte solo quando la richiesta va a buon fine.`
+    : rep.ritardo && !crF.ok ? `<strong>Collega lo script della scuola.</strong> ${esc(crF.errore || 'non raggiungibile')}. Apri il progetto Apps Script della scuola (account ciusa.edu.it) ed esegui <code>verifica()</code> per riautorizzarlo: il report parte da solo appena torna attivo.`
+    : rep.ritardo ? '<strong>Il report doveva partire alle 15:00.</strong> Attendo lo script della scuola, che controlla ogni 5 minuti: parte al prossimo passaggio.'
+    : `<strong>Il report per ${esc(dataCorta)} si prepara alle 15:00</strong>, una volta sola. Sotto: classi e laboratori dall'orario.`);
+  else if (rep.errori.length) inner += alertBox(rep.attesaRiprova ? `<strong>Riprova richiesto alle ${esc(hm(new Date(p.riprova.at)))}.</strong> Lo script della scuola lo esegue entro 5 minuti, poi il report arriva dalla Batch API.`
+    : `<strong>Report non generato per ${esc(rep.errori.join(', '))}.</strong> ${esc(consiglioErrore(rep.errori.map(k => p.classi[k].errore).join(' ')))} Nessun nuovo tentativo automatico.
+       <button class="btn btn-primary" data-act="rep-riprova" data-data="${esc(p.data)}" ${S.riprovaInvio ? 'disabled' : ''}>${S.riprovaInvio ? 'Invio…' : 'Riprova'}</button>${S.riprovaErr ? ` <span class="err">${esc(S.riprovaErr)}</span>` : ''}`);
   // premessa: orario, campanelle e ore libere del giorno, poi come usare i file
   const libere = M.ore.filter(h => !ore.some(l => l.n === h.n)).map(h => h.n + 'ª');
   const premessa = [`Ore e laboratori dall'orario${M.vigore ? ' (dal ' + M.vigore + ')' : ''}; campanelle ${M.ore.map(h => h.n + 'ª ' + h.s.replace(/^0/, '')).join(' · ')}.`,
     `Il ${GG[tg.getDay()]} hai ${ore.length} ${ore.length === 1 ? 'ora' : 'ore'}${libere.length && ore.length ? (libere.length === 1 ? '; la ' + libere[0] + ' è libera' : '; libere: ' + libere.join(', ')) : ''}.`,
     p ? 'Solo contenuti pubblicati da te su Classroom. Trascina i file nella cartella o nel post di Classroom, oppure usa Scarica / Copia.' : ''].filter(Boolean).join(' ');
   inner += `<p class="rep-pre m70">${esc(premessa)}</p>`;
-  if (p && !p.controllo20) inner += '<span class="small m62">Alle 20:00 controllo gli stream Classroom delle classi: se ci sono modifiche, il report si aggiorna.</span>';
   const con = (x.d.orario && x.d.orario.compresenza) || {};
   const cards = blocchi.map(b => {
     const k = p && p.classi && p.classi[b.cls], compr = (k && k.con) || con[b.cls];
@@ -791,7 +820,7 @@ function renderSpesa() {
   const m = sp.modelli || {};
   html += blocco('Risparmi attivi', 'Spesa Claude · 05', `<ul class="sp-r">
     <li><b>Report lezioni</b> con ${esc(NOMI_MODELLI[m.report] || m.report || 'Opus')} tramite la Batch API: metà prezzo, arriva entro circa un'ora.</li>
-    <li><b>Controllo delle 20</b>: si rigenerano solo le classi il cui Classroom è cambiato, non tutto il report.</li>
+    <li><b>Report una volta sola</b> alle 15:00: nessun nuovo tentativo automatico; le classi in errore si rigenerano solo con «Riprova».</li>
     <li><b>Firme</b> con ${esc(NOMI_MODELLI[m.firme] || m.firme || '')}: metà prezzo di Opus.</li>
     <li><b>Posta della scuola</b> con ${esc(NOMI_MODELLI[m.posta] || m.posta || '')}: circa 40 volte più economico di Opus.</li>
     <li><b>Circolari e moduli</b> restano su ${esc(NOMI_MODELLI[m.circolari] || m.circolari || 'Opus')}: partono solo quando trascini un documento.</li></ul>`);
@@ -953,12 +982,22 @@ async function svuotaCoda() {
   S.coda = resto; ls.set(K.coda, resto); svuotaCoda._in = false; render();
 }
 // Dopo l'orario di pronto di ogni bozza ricarica i dati a +1, +3, +6 e +10 minuti finché non arriva.
-// Dopo l'ultima firma segnata, ricarica ogni 2 minuti (per 90 minuti: il report passa dalla Batch API) finché il report non è pronto.
+// Dalle 15:00, finché il report non è pronto (o mentre un «Riprova» è in corso), rilegge lo snapshot ogni 3 minuti:
+// è solo una lettura dei dati, non chiama Claude.
 function reportInArrivo() {
-  if (!S.data || !S.ultimaFirmata || Date.now() - S.ultimaFirmata > 90 * 60e3 || Date.now() - S.lastFetch < 2 * 60e3) return false;
+  if (!S.data || SIM.ora || SIM.data || Date.now() - S.lastFetch < 3 * 60e3) return false;
   const now = new Date(), today = new Date(now); today.setHours(12, 0, 0, 0);
   const r = reportStato(S.data, modello(S.data), today, now.getHours() * 60 + now.getMinutes());
-  return !r.pronto && !r.mancano;
+  return r.inCorso || r.attesaRiprova || r.ritardo;
+}
+async function riprovaReport(data) {
+  if (S.riprovaInvio || S.mock) return;
+  S.riprovaInvio = true; S.riprovaErr = ''; render();
+  try {
+    const r = await fetch(ls.get(K.endpoint, ''), { method: 'POST', body: JSON.stringify({ azione: 'riprova_report', data, token: ls.get(K.token, '') }), headers: { 'Content-Type': 'text/plain;charset=utf-8' }, credentials: 'omit', redirect: 'follow' });
+    const j = await r.json(); if (!j.ok) throw new Error(j.errore || 'richiesta rifiutata');
+    S.riprovaInvio = false; await carica();
+  } catch (e) { S.riprovaInvio = false; S.riprovaErr = 'richiesta non inviata (' + (e.message || e) + ')'; render(); }
 }
 function bozzaInArrivo() {
   if (!S.data || SIM.ora || SIM.data) return false;
@@ -1068,6 +1107,7 @@ document.addEventListener('click', e => {
   else if (a === 'ver-sel') { S.verSel = id; render(); if (matchMedia('(max-width:860px)').matches) { const d = document.getElementById('ver-dettaglio'); if (d) d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }
   else if (a === 'ver-classe') { S.verClasse = id; S.verSel = ''; render(); }
   else if (a === 'ver-aggiorna') aggiornaVerifiche();
+  else if (a === 'rep-riprova') riprovaReport(el.dataset.data);
   else if (a === 'ver-corretta') {
     const v = ((S.ver.dati && S.ver.dati.verifiche) || []).find(x => x.id === S.verSel) || null, sel = document.querySelector('.ver-i.on');
     const vid = v ? v.id : sel && sel.dataset.id; if (!vid) return;
