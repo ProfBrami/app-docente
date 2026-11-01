@@ -358,7 +358,7 @@ function renderOggi(x, n) {
   else if (mins < 1195) { const left = todayB.filter(b => !fatta(b)).length; A = { ...A, k: 'Lezioni concluse', t: left ? left + (left === 1 ? ' firma da apporre' : ' firme da apporre') + ' sul registro' : 'Tutte le firme di oggi sono apposte', s: 'Report di ' + rep.label + ': ' + rep.breve }; }
   else A = { ...A, k: 'Sera', t: 'Report lezioni di ' + rep.label + ': ' + rep.breve, s: ndL.map(l => l.n + 'ª ' + l.cls).join(' · ') };
 
-  const hero = `<section class="hero${A.on ? ' on' : ''}"><span class="hero-k">${esc(A.k)}</span><span class="hero-t">${esc(A.t)}</span><span class="hero-s">${esc(A.s)}</span></section>`;
+  const hero = `<section class="hero ${A.on ? 'on' : autoFase}"><span class="hero-k">${esc(A.k)}</span><span class="hero-t">${esc(A.t)}</span><span class="hero-s">${esc(A.s)}</span></section>`;
   const prossima = scadenzeOrdinate(x.d, x.today).find(s => s.n >= 0 && s.n < 99);
   const tile = (id, num, lab, sub) => `<button class="tile" data-act="pagina" data-id="${id}"><span class="tile-i">${ICONE[id]}</span><span class="tile-n">${num}</span><span class="tile-l">${esc(lab)}</span><span class="tile-s">${esc(sub)}</span></button>`;
   const tiles = `<div class="tiles">

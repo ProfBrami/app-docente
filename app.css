@@ -347,3 +347,44 @@ html:has(.app),body:has(.app){background:var(--page)}
   .tile-n{font-size:26px}
   .app .sec{padding:16px}
 }
+
+/* — colori: una tinta tenue per sezione (menu, riquadri, schede), sfondi morbidi, «Adesso» che cambia col momento della giornata — */
+:root{--page:#f1f4f2}
+[data-theme="dark"]{--page:#101417}
+@media (prefers-color-scheme: dark){[data-theme="auto"]{--page:#101417}}
+.app{--h:#5f86ad}
+.app [data-id=""]{--h:#5f86ad}
+.app [data-id="orario"],#s-orario{--h:#4f91b5}
+.app [data-id="firme"],#s-firme{--h:#5e9c7a}
+.app [data-id="report"],#s-report{--h:#7d74b8}
+.app [data-id="circolari"],#s-circolari{--h:#3f9690}
+.app [data-id="scadenze"],#s-scadenze{--h:#c0904a}
+.app [data-id="classi"],#s-classi{--h:#c07a5c}
+.app [data-id="verifiche"],.pg-verifiche{--h:#b0708e}
+.app [data-id="incarichi"],#s-ut,#s-ricond,#s-orient{--h:#8a9550}
+.app [data-id="note"],#s-note{--h:#c4a63e}
+.app [data-id="spesa"],.pg-spesa{--h:#6f8f9e}
+.app [data-id="impostazioni"],.pg-impostazioni{--h:#8a8f98}
+
+.nav-i .ic{color:color-mix(in srgb,var(--h) 85%,var(--color-text))}
+.nav-i:hover{background:color-mix(in srgb,var(--h) 10%,transparent)}
+.nav-i.on{background:color-mix(in srgb,var(--h) 17%,var(--card));color:color-mix(in srgb,var(--h) 50%,var(--color-text))}
+.nav-b{background:var(--h);color:#fff}
+.nav-logo{background:linear-gradient(135deg,#5e9c7a,#4f91b5);color:#fff}
+.tab-i.on{color:color-mix(in srgb,var(--h) 70%,var(--color-text))}
+
+.tile{border-top:3px solid color-mix(in srgb,var(--h) 60%,transparent)}
+.tile:hover{border-color:color-mix(in srgb,var(--h) 55%,transparent)}
+.tile-i{background:color-mix(in srgb,var(--h) 17%,var(--card));color:color-mix(in srgb,var(--h) 80%,var(--color-text))}
+.tile-n{color:color-mix(in srgb,var(--h) 55%,var(--color-text))}
+
+.app .sec{border-top:3px solid color-mix(in srgb,var(--h) 55%,transparent)!important}
+.app .sec .kicker{color:color-mix(in srgb,var(--h) 75%,var(--color-text))}
+.app .giornata{--h:#5e9c7a}
+
+.hero{border:0;color:var(--color-text)}
+.hero.mattina{background:linear-gradient(120deg,color-mix(in srgb,#5e9c7a 24%,var(--card)),color-mix(in srgb,#4f91b5 16%,var(--card)))}
+.hero.pomeriggio{background:linear-gradient(120deg,color-mix(in srgb,#c0904a 22%,var(--card)),color-mix(in srgb,#c07a5c 14%,var(--card)))}
+.hero.sera{background:linear-gradient(120deg,color-mix(in srgb,#7d74b8 24%,var(--card)),color-mix(in srgb,#6f8f9e 16%,var(--card)))}
+.hero.on{background:linear-gradient(120deg,#4f8f76,#3f8a8f);color:#fff}
+.hero .hero-k{opacity:.75}
