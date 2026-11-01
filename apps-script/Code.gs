@@ -85,6 +85,7 @@ function doPost(e) {
     if (b.azione === 'documenti') return json_(riceviDocumenti_(b));
     if (b.azione === 'posta_scuola') return json_(riceviPostaScuola_(b));
     if (b.azione === 'verifiche') return json_(riceviVerifiche_(b));
+    if (b.azione === 'verifica_corretta') return json_(segnaVerificaCorretta_(b));
     if (b.azione === 'aggiorna_verifiche') { const t = new Date().toISOString(); P_().setProperty('VER_RICHIESTA', t); return json_({ ok: true, richiesta: t }); }
     return json_({ errore: 'azione sconosciuta' });
   } catch (err) { return json_({ errore: String(err.message || err).slice(0, 300) }); }
@@ -503,12 +504,23 @@ function riceviVerifiche_(b) {
   P_().setProperty('VER_STATO', JSON.stringify({ aggiornato: ora, errore: null, n }));
   return { ok: true, verifiche: (b.verifiche || []).length };
 }
+// b: { id, valore } — «Segna come corretta» dall'app (VER_CORR: id → data). Le verifiche fino al 1° novembre 2026 lo sono già.
+function segnaVerificaCorretta_(b) {
+  const lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    const c = JSON.parse(P_().getProperty('VER_CORR') || '{}'), id = String(b.id || '');
+    if (!id) return { errore: 'verifica mancante' };
+    if (b.valore) c[id] = new Date().toISOString(); else delete c[id];
+    P_().setProperty('VER_CORR', JSON.stringify(c));
+  } finally { lock.releaseLock(); }
+  return { ok: true };
+}
 function verificheSnap_() {
   const st = JSON.parse(P_().getProperty('VER_STATO') || 'null');
-  if (!st) return { aggiornato: null, errore: 'nessun dato dallo script della scuola', verifiche: [] };
+  if (!st) return { aggiornato: null, errore: 'nessun dato dallo script della scuola', verifiche: [], corrette: {} };
   let s = ''; for (let i = 0; i < (st.n || 0); i++) s += P_().getProperty('VER_' + i) || '';
   let verifiche = []; try { verifiche = JSON.parse(s || '[]'); } catch (e) { return { aggiornato: st.aggiornato, errore: 'elenco delle verifiche illeggibile', verifiche: [] }; }
-  return { aggiornato: st.aggiornato || null, errore: st.errore || null, erroreAlle: st.erroreAlle || null, verifiche };
+  return { aggiornato: st.aggiornato || null, errore: st.errore || null, erroreAlle: st.erroreAlle || null, verifiche, corrette: JSON.parse(P_().getProperty('VER_CORR') || '{}') };
 }
 
 /* ---------- report lezioni ---------- */

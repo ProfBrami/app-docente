@@ -88,7 +88,7 @@ const S = {
   utLab: LABS[0], utText: '',
   variante: ls.get(K.variante, 'A'), tema: ls.get(K.tema, 'auto'),
   pagina: '', credito: ls.json(K.credito, null), crUsd: '', crData: '',
-  ver: { dati: ls.json(K.verifiche, null), carico: false, err: '', at: 0 }, verSel: '', verClasse: ''
+  ver: { dati: ls.json(K.verifiche, null), carico: false, err: '', at: 0 }, verSel: '', verClasse: '', verCorr: {}
 };
 // pagine oltre alla plancia: #verifiche, #spesa
 const PAGINE = [['', 'Plancia'], ['verifiche', 'Verifiche'], ['spesa', 'Spesa Claude']];
@@ -775,6 +775,24 @@ async function aggiornaVerifiche() {
   render();
 }
 const verificheInAttesa = () => S.pagina === 'verifiche' && S.ver.attesa && !S.ver.carico && Date.now() - S.ver.at > 20e3;
+// Correzione: le verifiche fino al 1° novembre 2026 sono già corrette; le nuove mostrano «Correggi», che sul Mac esegue
+// il Comando rapido «Correggi verifica» (strumenti/Correggi verifica.shortcut): crea e apre nel Finder la cartella in
+// Download e apre Claude con la richiesta per la skill valutazione-pratica. «Segna come corretta» vale per tutti i dispositivi.
+const VERIFICHE_CORRETTE_FINO = '2026-11-01';
+const MESI_CAP = MESI.map(m => m[0].toUpperCase() + m.slice(1));
+const verCorretta = v => v.data <= VERIFICHE_CORRETTE_FINO || (v.id in S.verCorr ? S.verCorr[v.id] : !!((S.ver.dati && S.ver.dati.corrette) || {})[v.id]);
+function cartellaVerifica(v, tutte) { // come nella skill: Verifica_<Tipo>_<Mese>_<Classe>, col giorno se nel mese ce n'è più d'una
+  const tipo = t => /SQL/i.test(t) ? 'SQL' : /PHP/i.test(t) ? 'PHP' : /HTML/i.test(t) ? 'HTML' : 'Pratica';
+  const base = x => 'Verifica_' + tipo(x.titolo) + '_' + MESI_CAP[Number(x.data.slice(5, 7)) - 1] + '_' + x.classe;
+  return base(v) + (tutte.filter(x => base(x) === base(v)).length > 1 ? '_' + v.data.slice(8, 10) : '');
+}
+function richiestaCorrezione(v, cartella) {
+  return `Correggi la verifica «${v.titolo}» della ${v.classe} del ${dmyIso(v.data)} con la skill valutazione-pratica.`
+    + (v.link ? ` Compito su Classroom: ${v.link}` : '')
+    + `\nCartella di lavoro: ~/Downloads/${cartella} (esiste già ed è aperta nel Finder): salva lì tutti i file.`
+    + `\nSe le soluzioni sono già allegate al compito in Classroom${(v.allegati || []).length ? ' (allegati: ' + v.allegati.map(a => a.titolo).join(', ') + ')' : ''} usa quelle; altrimenti scrivile tu.`
+    + `\nConfronta tutti gli elaborati con le soluzioni e, SENZA MODIFICARE IL CODICE DEGLI STUDENTI, aggiungi solo i commenti previsti dalla skill. Nomina gli elaborati con il nome dell'alunno.`;
+}
 const dataLunga = g => { const d = new Date(g + 'T12:00:00'); return GG[d.getDay()] + ' ' + d.getDate() + ' ' + MESI[d.getMonth()] + ' ' + d.getFullYear(); };
 function renderVerifiche() {
   const now = adesso(), oggi = iso(now), j = S.ver.dati, tutte = (j && j.verifiche) || [];
@@ -794,25 +812,32 @@ function renderVerifiche() {
     sx += '<ol class="plain ver-l">' + elenco.map(v => {
       const m = v.data.slice(0, 7), intest = m !== mese ? `<li class="ver-m kicker">${MESI[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}</li>` : '';
       mese = m;
-      const d = new Date(v.data + 'T12:00:00'), futura = v.data > oggi;
+      const d = new Date(v.data + 'T12:00:00'), futura = v.data > oggi, ok = verCorretta(v);
       return intest + `<li><button class="ver-i${v === scelta ? ' on' : ''}" data-act="ver-sel" data-id="${esc(v.id)}" aria-current="${v === scelta}">
         <span class="ver-d">${G3[d.getDay()]} ${dmy(d)}</span><span class="tag ${v === scelta ? 'tag-accent' : 'tag-neutral'}">${esc(v.classe)}</span>
-        <span class="ver-t">${esc(v.titolo)}${futura ? '<span class="small m60">in programma</span>' : ''}</span></button></li>`;
+        <span class="ver-t">${esc(v.titolo)}<span class="small ${ok || futura ? 'm60' : 'ver-dc'}">${futura ? 'In programma' : ok ? 'Corretta' : 'Da correggere'}</span></span></button></li>`;
     }).join('') + '</ol>';
   }
 
   let dx = '';
   if (scelta) {
-    const cmd = 'Correggi la verifica «' + scelta.titolo + '» della ' + scelta.classe + ' del ' + dmyIso(scelta.data) + ' (skill valutazione-pratica).';
+    const cartella = cartellaVerifica(scelta, tutte), cmd = richiestaCorrezione(scelta, cartella), ok = verCorretta(scelta), futura = scelta.data > oggi;
     COPIE['ver-cmd'] = cmd;
+    const manuale = scelta.data > VERIFICHE_CORRETTE_FINO; // corretta segnata dal docente: si può annullare
+    const azioni = futura ? '<span class="tag tag-outline">In programma</span>'
+      : ok ? `<span class="tag tag-accent ver-ok">Corretta</span>${manuale ? '<button class="btn btn-ghost" data-act="ver-corretta" data-val="0">Segna da correggere</button>' : ''}`
+      : (MAC ? `<a class="btn btn-primary" href="${'shortcuts://run-shortcut?name=' + encodeURIComponent('Correggi verifica') + '&input=text&text=' + encodeURIComponent(cartella + '\n' + 'claude://claude.ai/new?q=' + encodeURIComponent(cmd))}">Correggi</a>`
+          : '<button class="btn btn-primary" disabled title="La correzione si fa sul Mac: usa la cartella Download e Claude desktop">Correggi dal Mac</button>')
+        + `<button class="btn btn-secondary" data-act="copy" data-key="ver-cmd">${S.copied === 'ver-cmd' ? 'Copiato' : 'Copia richiesta'}</button><button class="btn btn-ghost" data-act="ver-corretta" data-val="1">Segna come corretta</button>`;
     const meta = [dataLunga(scelta.data), scelta.pubblicata ? 'pubblicata il ' + dmyIso(scelta.pubblicata.slice(0, 10)) + ' alle ' + scelta.pubblicata.slice(11, 16) : '',
       scelta.scadenza ? 'consegna entro il ' + dmyIso(scelta.scadenza) : '', scelta.punti ? 'punteggio massimo ' + scelta.punti : ''].filter(Boolean).join(' · ');
     dx = `<header class="sec-h"><div><span class="kicker">Verifica · ${esc(scelta.classe)}</span><h3>${esc(scelta.titolo)}</h3></div></header>
       <span class="small m62">${esc(meta)}</span>
       ${scelta.testo ? `<div class="ver-x">${esc(scelta.testo)}</div>` : '<p class="m62" style="margin:0;font-size:14px">Nessuna consegna scritta nel compito: la traccia è negli allegati.</p>'}
       ${(scelta.allegati || []).length ? `<div class="col" style="gap:6px"><span class="kicker">Allegati</span><ul class="plain ver-a">${scelta.allegati.map(a => `<li>${safeUrl(a.url) ? `<a href="${safeUrl(a.url)}" target="_blank" rel="noopener">${esc(a.titolo)}</a>` : esc(a.titolo)}</li>`).join('')}</ul></div>` : ''}
-      <div class="row">${safeUrl(scelta.link) ? `<a class="btn btn-primary" href="${safeUrl(scelta.link)}" target="_blank" rel="noopener">Apri in Classroom</a>` : ''}
-        <button class="btn btn-secondary" data-act="copy" data-key="ver-cmd">${S.copied === 'ver-cmd' ? 'Copiato' : 'Copia comando di correzione'}</button><a class="btn btn-ghost" ${claudeLink(cmd)}>Correggi con Claude</a></div>`;
+      <div class="row" style="align-items:center">${azioni}</div>
+      ${!ok && !futura && MAC ? `<span class="small m62">«Correggi» crea e apre nel Finder la cartella <code>Download/${esc(cartella)}</code> e apre Claude con la richiesta per la skill valutazione-pratica. La prima volta installa il Comando rapido <a href="./strumenti/Correggi%20verifica.shortcut" download>Correggi verifica</a> (doppio clic sul file, poi Aggiungi; in Comandi rapidi › Impostazioni › Avanzate attiva «Consenti l'esecuzione degli script»).</span>` : ''}
+      ${safeUrl(scelta.link) ? `<div class="row"><a class="btn btn-ghost" href="${safeUrl(scelta.link)}" target="_blank" rel="noopener">Apri in Classroom</a></div>` : ''}`;
   } else dx = empty('Scegli una verifica dall\'elenco.');
 
   return `<div class="wrap">${renderTop(now)}
@@ -975,6 +1000,13 @@ document.addEventListener('click', e => {
   else if (a === 'ver-sel') { S.verSel = id; render(); if (matchMedia('(max-width:860px)').matches) { const d = document.getElementById('ver-dettaglio'); if (d) d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }
   else if (a === 'ver-classe') { S.verClasse = id; S.verSel = ''; render(); }
   else if (a === 'ver-aggiorna') aggiornaVerifiche();
+  else if (a === 'ver-corretta') {
+    const v = ((S.ver.dati && S.ver.dati.verifiche) || []).find(x => x.id === S.verSel) || null, sel = document.querySelector('.ver-i.on');
+    const vid = v ? v.id : sel && sel.dataset.id; if (!vid) return;
+    S.verCorr = { ...S.verCorr, [vid]: el.dataset.val === '1' };
+    accoda({ azione: 'verifica_corretta', id: vid, valore: el.dataset.val === '1' }, q => q.azione === 'verifica_corretta' && q.id === vid);
+    render();
+  }
   else if (a === 'copyfirma') copiaFirma(el);
   else if (a === 'scegli') { const f = document.getElementById('doc-file'); if (f) f.click(); }
   else if (a === 'ics') scaricaIcs(el.dataset.job, Number(el.dataset.c), Number(el.dataset.p));

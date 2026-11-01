@@ -245,3 +245,5 @@ textarea.note{min-height:150px;resize:vertical;font-size:14px;line-height:1.5}
 .ver-x{white-space:pre-wrap;font-size:14px;line-height:1.5;padding:12px;border:1px solid var(--color-divider);max-height:55vh;overflow-y:auto}
 .ver-a li{padding:3px 0;font-size:14px}
 @media (max-width:860px){.ver{grid-template-columns:1fr}.ver-sx{max-height:none}.ver-dx{position:static}}
+.ver-dc{color:var(--color-accent-700);font-weight:600}
+.ver-ok{font-size:13px;padding:4px 12px}
