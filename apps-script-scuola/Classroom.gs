@@ -341,7 +341,7 @@ function blocchi_(o, d) {
   (o.ore || []).filter(h => x[h.n]).forEach(h => {
     const b = out[out.length - 1];
     if (b && b.cls === x[h.n] && b.ore[b.ore.length - 1] === h.n - 1) { b.ore.push(h.n); b.e = h.e; }
-    else out.push({ cls: x[h.n], lab: (o.lab || {})[x[h.n]] || '', first: h.n, ore: [h.n], s: h.s, e: h.e });
+    else out.push({ cls: x[h.n], lab: ((o.lab_ora || {})[String(d.getDay())] || {})[h.n] || (o.lab || {})[x[h.n]] || '', first: h.n, ore: [h.n], s: h.s, e: h.e });
   });
   return out;
 }

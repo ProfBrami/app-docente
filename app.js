@@ -164,7 +164,7 @@ function modello(data) {
   const o = data && data.orario;
   const sett = o && o.settimana && typeof o.settimana === 'object' && Object.keys(o.settimana).length ? o.settimana : null;
   const ore = o && Array.isArray(o.ore) && o.ore.length ? o.ore : ORE_SCUOLA;
-  const lab = (o && o.lab) || {};
+  const lab = (o && o.lab) || {}, labOra = (o && o.lab_ora) || {}; // lab_ora: eccezioni di una singola ora (giorno → ora → laboratorio)
   // calendario scolastico dal backend: motivo del giorno senza lezioni (festività, vacanze, sospensioni), altrimenti null
   const cal = data && data.calendario;
   const festa = d => {
@@ -174,7 +174,7 @@ function modello(data) {
     const s = (cal.sospensioni || []).find(x => g >= x.da && g <= x.a);
     return s ? s.motivo : null;
   };
-  const settimanali = d => { if (!sett) return []; const x = sett[d.getDay()] || {}; return ore.filter(h => x[h.n]).map(h => ({ ...h, cls: x[h.n], lab: lab[x[h.n]] || '' })); };
+  const settimanali = d => { if (!sett) return []; const x = sett[d.getDay()] || {}; return ore.filter(h => x[h.n]).map(h => ({ ...h, cls: x[h.n], lab: (labOra[d.getDay()] || {})[h.n] || lab[x[h.n]] || '' })); };
   const lessons = d => festa(d) ? [] : settimanali(d);
   const blocks = d => { const out = []; lessons(d).forEach(l => { const b = out[out.length - 1]; if (b && b.cls === l.cls && b.last === l.n - 1) { b.last = l.n; b.e = l.e; b.num++; } else out.push({ cls: l.cls, lab: l.lab, first: l.n, last: l.n, s: l.s, e: l.e, num: 1 }); }); return out; };
   const nextSchool = d => {

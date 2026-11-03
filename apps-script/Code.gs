@@ -1086,7 +1086,7 @@ PROFILO
 - Ruoli: Responsabile dell'Ufficio Tecnico; collaboratore dell'Orientamento in ingresso; docente esperto del modulo "Officina Ciusa: ricondizionamento". Non è coordinatore di classe né membro della Commissione elettorale o dei seggi.
 - Classi: 4^B, 4^C (C++), 5^B, 5^I (SQL). Mercoledì è il suo giorno libero.
 - Ore: 1ª 8:10–9:10, 2ª 9:10–10:05, 3ª 10:15–11:10, 4ª 11:10–12:05, 5ª 12:15–13:05, 6ª 13:05–13:55.
-- Orario (dal 12/10/2026): lun 2ª-3ª 4^C Matrix, 4ª 4^B Arrakis, 5ª-6ª 5^I Arrakis; mar 1ª 5^I Arrakis, 2ª 4^C Matrix, 3ª 5^B Lab. 21, 4ª 4^B Arrakis, 6ª 5^B Lab. 21; mer libero; gio 1ª 5^I Arrakis, 2ª 5^B Lab. 21; ven 3ª 4^C Matrix, 4ª 4^B Arrakis; sab 3ª 4^B Lab. 21, 4ª 5^B Lab. 21.
+- Orario (laboratori dal 02/11/2026): lun 2ª-3ª 4^C Matrix, 4ª 4^B Arrakis, 5ª-6ª 5^I Arrakis; mar 1ª 5^I Matrix, 2ª 4^C Matrix, 3ª 5^B Lab. 21, 4ª 4^B Arrakis, 6ª 5^B Lab. 21; mer libero; gio 1ª 5^I Arrakis, 2ª 5^B Lab. 21; ven 3ª 4^C Matrix, 4ª 4^B Arrakis; sab 3ª 4^B Lab. 21, 4ª 5^B Lab. 21.
 - Dirigente: Silvia Meloni. Funzione strumentale orientamento in ingresso: prof.ssa Gianfranca Manca.
 - Calendario 2026/27: trimestre fino al 22/12/2026; pentamestre dal 7/1/2027; senza lezioni 2/11, 7-8/12, 23/12–6/1, 9/2, 25–30/3/2027, 26–30/4, 1/5, 2/6; fine lezioni 8/6/2027.
 - Modulo ricondizionamento (PN Scuola e competenze 21/27, classe 5^I, con prof.ssa Valeria S. Congiu): ogni martedì 14:30–16:30 e ogni venerdì 5ª–6ª ora, laboratorio Skynet, dal 20/10/2026 (fine stimata 22/12/2026). "Scienza in piazza" 18–20/11/2026 all'aeroporto di Olbia: ogni giornata vale come lezione del corso, non segnalare le sue lezioni ordinarie del 19 e 20/11.

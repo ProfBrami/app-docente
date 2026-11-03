@@ -68,6 +68,16 @@
             "type": "string"
           }
         },
+        "lab_ora": {
+          "type": "object",
+          "description": "Eccezioni a lab per singola ora: giorno (0=dom…6=sab) → numero ora → laboratorio",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
         "settimana": {
           "type": "object",
           "additionalProperties": {
