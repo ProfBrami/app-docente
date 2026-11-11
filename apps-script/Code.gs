@@ -76,6 +76,7 @@ function doGet(e) {
   if (!tok || !uguali_(String(p.token || ''), tok)) return json_({ errore: 'non autorizzato' });
   if (p.file) return json_(scaricaDocumento_(p.file));
   if (p.verifiche) return json_(verificheSnap_());
+  if (p.elenchi) return json_(elenchiSnap_());
   if (p.richiesta_verifiche) return json_({ richiesta: P_().getProperty('VER_RICHIESTA') || null });
   const snap = p.refresh === '1' ? aggiorna() : (leggiSnap_() || aggiorna());
   return json_(snap);
@@ -104,6 +105,8 @@ function doPost(e) {
     if (b.azione === 'posta_scuola') return json_(riceviPostaScuola_(b));
     if (b.azione === 'verifiche') return json_(riceviVerifiche_(b));
     if (b.azione === 'verifica_corretta') return json_(segnaVerificaCorretta_(b));
+    if (b.azione === 'elenco_registra') return json_(registraElenco_(b));
+    if (b.azione === 'elenco_elimina') return json_(eliminaElenco_(b));
     if (b.azione === 'aggiorna_verifiche') { const t = new Date().toISOString(); P_().setProperty('VER_RICHIESTA', t); return json_({ ok: true, richiesta: t }); }
     return json_({ errore: 'azione sconosciuta' });
   } catch (err) { return json_({ errore: String(err.message || err).slice(0, 300) }); }
@@ -541,6 +544,72 @@ function verificheSnap_() {
   let s = ''; for (let i = 0; i < (st.n || 0); i++) s += P_().getProperty('VER_' + i) || '';
   let verifiche = []; try { verifiche = JSON.parse(s || '[]'); } catch (e) { return { aggiornato: st.aggiornato, errore: 'elenco delle verifiche illeggibile', verifiche: [] }; }
   return { aggiornato: st.aggiornato || null, errore: st.errore || null, erroreAlle: st.erroreAlle || null, verifiche, corrette: JSON.parse(P_().getProperty('VER_CORR') || '{}') };
+}
+
+/* ---------- elenchi alunni (pagina «Elenchi» dell'app) ---------- */
+// Alunni per classe da elenchi.json in "Dashboard Docente/dati" su Drive (solo lettura: i nomi non stanno nel repo pubblico).
+// Lo storico degli elenchi registrati sta nelle Script Properties (ELE_0..n, ELE_STATO) e vale su tutti i dispositivi;
+// alla prima lettura vi si importa lo «storico» di elenchi.json (es. Genitori a Colloquio del 10 Novembre).
+function elenchiDrive_() {
+  const it = DriveApp.getFoldersByName('Dashboard Docente');
+  if (!it.hasNext()) return null;
+  const sub = it.next().getFoldersByName('dati');
+  if (!sub.hasNext()) return null;
+  const fit = sub.next().getFilesByName('elenchi.json'), fs = [];
+  while (fit.hasNext()) fs.push(fit.next());
+  if (!fs.length) return null;
+  fs.sort((a, b) => b.getLastUpdated() - a.getLastUpdated());
+  return JSON.parse(fs[0].getBlob().getDataAsString());
+}
+const elenchiDriveSicuro_ = () => { try { return elenchiDrive_(); } catch (e) { return null; } };
+function storicoElenchi_(drive) {
+  const st = JSON.parse(P_().getProperty('ELE_STATO') || 'null');
+  if (!st) {
+    if (!drive) return []; // Drive non leggibile: si importa alla prossima lettura riuscita
+    const iniziale = Array.isArray(drive.storico) ? drive.storico : [];
+    salvaStoricoElenchi_(iniziale);
+    return iniziale;
+  }
+  let s = ''; for (let i = 0; i < (st.n || 0); i++) s += P_().getProperty('ELE_' + i) || '';
+  return JSON.parse(s || '[]');
+}
+function salvaStoricoElenchi_(lista) {
+  const prima = JSON.parse(P_().getProperty('ELE_STATO') || 'null') || { n: 0 };
+  const s = JSON.stringify(lista), n = Math.ceil(s.length / 8000), pezzi = {};
+  for (let i = 0; i < n; i++) pezzi['ELE_' + i] = s.slice(i * 8000, (i + 1) * 8000);
+  pezzi.ELE_STATO = JSON.stringify({ n, aggiornato: new Date().toISOString() });
+  P_().setProperties(pezzi);
+  for (let i = n; i < (prima.n || 0); i++) P_().deleteProperty('ELE_' + i);
+}
+function elenchiSnap_() {
+  let drive = null, errore = null;
+  try { drive = elenchiDrive_(); if (!drive) errore = 'elenchi.json non trovato in "Dashboard Docente/dati" su Drive'; }
+  catch (e) { errore = 'elenchi.json illeggibile: ' + String(e.message || e).slice(0, 150); }
+  const lock = LockService.getScriptLock(); lock.waitLock(30000);
+  let storico;
+  try { storico = storicoElenchi_(drive); } finally { lock.releaseLock(); }
+  return { aggiornato: new Date().toISOString(), errore, classi: (drive && drive.classi) || {}, note: (drive && drive.note) || {}, storico };
+}
+// b: { elenco: { id, titolo, data, alunni: { classe: [nomi] } } }
+function registraElenco_(b) {
+  const e = b.elenco || {}, id = String(e.id || ''), titolo = String(e.titolo || '').trim().slice(0, 200);
+  if (!id || !titolo) return { errore: 'elenco senza titolo' };
+  const alunni = {};
+  Object.keys(e.alunni || {}).forEach(c => { const l = (e.alunni[c] || []).map(String).filter(Boolean); if (l.length) alunni[String(c)] = l; });
+  if (!Object.keys(alunni).length) return { errore: 'nessun alunno selezionato' };
+  const lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    const lista = storicoElenchi_(elenchiDriveSicuro_()).filter(x => x.id !== id);
+    lista.unshift({ id, titolo, data: String(e.data || new Date().toISOString()), alunni });
+    salvaStoricoElenchi_(lista);
+  } finally { lock.releaseLock(); }
+  return { ok: true };
+}
+function eliminaElenco_(b) {
+  const id = String(b.id || ''); if (!id) return { errore: 'elenco mancante' };
+  const lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try { salvaStoricoElenchi_(storicoElenchi_(elenchiDriveSicuro_()).filter(x => x.id !== id)); } finally { lock.releaseLock(); }
+  return { ok: true };
 }
 
 /* ---------- report lezioni ---------- */

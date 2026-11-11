@@ -247,6 +247,31 @@ textarea.note{min-height:150px;resize:vertical;font-size:14px;line-height:1.5}
 @media (max-width:860px){.ver{grid-template-columns:1fr}.ver-sx{max-height:none}.ver-dx{position:static}}
 .ver-dc{color:var(--color-accent-700);font-weight:600}
 .ver-ok{font-size:13px;padding:4px 12px}
+/* Elenchi alunni */
+.ele-tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(68px,1fr));gap:8px;margin-bottom:16px}
+.ele-tab{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 8px;border-radius:var(--r-s,8px);background:var(--card,var(--color-surface));border:1px solid var(--color-divider);text-align:center}
+.ele-tab b{font-family:var(--font-heading);font-size:17px}
+.ele-tab span{font-size:11.5px;color:color-mix(in srgb,var(--color-text) 62%,transparent)}
+.ele-tab:hover{border-color:color-mix(in srgb,var(--h) 60%,transparent)}
+.ele-tab:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}
+.ele-tab.on{background:color-mix(in srgb,var(--h) 20%,var(--card,var(--color-surface)));border-color:var(--h)}
+.ele{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;align-items:start}
+@media (max-width:860px){.ele{grid-template-columns:1fr}}
+.ele-l li + li .ele-a{border-top:1px solid var(--color-divider)}
+.ele-a{display:grid;grid-template-columns:26px 24px 1fr;gap:10px;align-items:center;padding:9px 6px;cursor:pointer;font-size:14.5px}
+.ele-a:hover{background:color-mix(in srgb,var(--h) 8%,transparent)}
+.ele-a.on{background:color-mix(in srgb,var(--h) 13%,transparent)}
+.ele-a input{width:20px;height:20px;margin:0;accent-color:var(--h);cursor:pointer}
+.ele-i{text-align:right;font-variant-numeric:tabular-nums;color:color-mix(in srgb,var(--color-text) 55%,transparent)}
+.ele-nm{font-weight:500;overflow-wrap:anywhere}
+.ele-reg{display:flex;flex-direction:column;gap:8px;padding-top:14px;border-top:1px solid var(--color-divider)}
+.ele-s > li{display:flex;flex-direction:column;gap:8px;padding:12px 0;border-top:1px solid var(--color-divider)}
+.ele-s > li:first-child{border-top:0;padding-top:0}
+.ele-sh{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.ele-sh b{font-size:15px;text-wrap:pretty}
+.ele-n{display:flex;flex-wrap:wrap;gap:6px}
+.ele-n span{font-size:13px;padding:3px 9px;border-radius:999px;background:color-mix(in srgb,var(--h) 13%,transparent)}
+.ele-del{align-self:flex-start;font-size:12.5px;min-height:28px;padding:2px 10px}
 
 /* ============================================================
    Nuovo layout: menu laterale (computer) / barra in basso (iPhone, iPad), una pagina per sezione,
@@ -361,6 +386,7 @@ html:has(.app),body:has(.app){background:var(--page)}
 .app [data-id="scadenze"],#s-scadenze{--h:#c0904a}
 .app [data-id="classi"],#s-classi{--h:#c07a5c}
 .app [data-id="verifiche"],.pg-verifiche{--h:#b0708e}
+.app [data-id="elenchi"],.pg-elenchi{--h:#5a8f6a}
 .app [data-id="incarichi"],#s-ut,#s-ricond,#s-orient{--h:#8a9550}
 .app [data-id="note"],#s-note{--h:#c4a63e}
 .app [data-id="spesa"],.pg-spesa{--h:#6f8f9e}

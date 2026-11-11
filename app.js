@@ -43,7 +43,7 @@ const CLASSEVIVA_BACHECA = 'https://web.spaggiari.eu/sif/app/default/bacheca_per
 const CLASSEVIVA_COMANDO = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Apri ClasseViva');
 const daClasseviva = i => i.fonte === 'ClasseViva' || i.fonte === 'Segreteria Digitale';
 const claudeLink = t => `href="${(MAC ? 'claude://claude.ai/new?q=' : 'https://claude.ai/new?q=') + encodeURIComponent(t)}"${MAC ? '' : ' target="_blank" rel="noopener"'}`;
-const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda',nascoste:'pd_circ_nascoste',lette:'pd_circ_lette',credito:'pd_credito',verifiche:'pd_verifiche'};
+const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda',nascoste:'pd_circ_nascoste',lette:'pd_circ_lette',credito:'pd_credito',verifiche:'pd_verifiche',elenchi:'pd_elenchi',eleSel:'pd_elenchi_sel'};
 
 const CORNERS = '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
 const ICON_ALERT = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>';
@@ -88,7 +88,8 @@ const S = {
   utLab: LABS[0], utText: '',
   variante: ls.get(K.variante, 'A'), tema: ls.get(K.tema, 'auto'),
   pagina: '', menu: false, credito: ls.json(K.credito, null), crUsd: '', crData: '',
-  ver: { dati: ls.json(K.verifiche, null), carico: false, err: '', at: 0 }, verSel: '', verClasse: '', verCorr: {}
+  ver: { dati: ls.json(K.verifiche, null), carico: false, err: '', at: 0 }, verSel: '', verClasse: '', verCorr: {},
+  ele: { dati: ls.json(K.elenchi, null), carico: false, err: '', classe: '', sel: ls.json(K.eleSel, {}), titolo: '' }
 };
 // Navigazione: «Oggi» è la schermata iniziale, ogni sezione ha la sua pagina (#firme, #verifiche, …).
 // Sul computer menu laterale, su iPhone/iPad barra in basso con le voci principali e «Menu» per le altre.
@@ -102,6 +103,7 @@ const ICONE = {
   scadenze: I('<circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 2h6"/>'),
   classi: I('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>'),
   verifiche: I('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 13l2 2 4-4"/>'),
+  elenchi: I('<path d="M10 6h10M10 12h10M10 18h10"/><path d="m3 6 1.5 1.5L7 5M3 12l1.5 1.5L7 11"/><rect x="3" y="16.5" width="3.5" height="3.5" rx=".5"/>'),
   incarichi: I('<path d="M14.5 6.5a4 4 0 0 0-5.3 5.3L3 18l3 3 6.2-6.2a4 4 0 0 0 5.3-5.3l-2.5 2.5-2.5-2.5z"/>'),
   note: I('<path d="M5 3h14v12l-6 6H5z"/><path d="M13 21v-6h6"/>'),
   spesa: I('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
@@ -110,7 +112,7 @@ const ICONE = {
 };
 const PAGINE = [
   ['Giornata', [['', 'Oggi'], ['orario', 'Orario'], ['firme', 'Firme'], ['report', 'Report lezioni']]],
-  ['Scuola', [['circolari', 'Circolari'], ['scadenze', 'Scadenze'], ['classi', 'Classi'], ['verifiche', 'Verifiche']]],
+  ['Scuola', [['circolari', 'Circolari'], ['scadenze', 'Scadenze'], ['classi', 'Classi'], ['verifiche', 'Verifiche'], ['elenchi', 'Elenchi alunni']]],
   ['Incarichi', [['incarichi', 'Ufficio tecnico e incarichi'], ['note', 'Note rapide']]],
   ['Sistema', [['spesa', 'Spesa Claude'], ['impostazioni', 'Impostazioni']]]
 ];
@@ -350,7 +352,7 @@ function renderApp() {
     : p === 'orario' ? secOrario(x, c) : p === 'firme' ? secFirme(x, c) : p === 'report' ? secReport(x, c)
     : p === 'circolari' ? secCircolari(x, c) : p === 'scadenze' ? secScadenze(x, c) : p === 'classi' ? secClassi(x, c)
     : p === 'note' ? secNote(x, c) : p === 'incarichi' ? `<div class="pg-g">${secUT(x, c)}${secRicond(x, c)}${secOrient(x, c)}</div>`
-    : p === 'verifiche' ? renderVerifiche() : p === 'spesa' ? renderSpesa() : renderImpostazioni();
+    : p === 'verifiche' ? renderVerifiche() : p === 'elenchi' ? renderElenchi() : p === 'spesa' ? renderSpesa() : renderImpostazioni();
   return `<div class="app">${nav}<div class="main">${bar}${avvisi.join('')}<main class="pg pg-${p || 'oggi'}">${pagina}</main></div>${tab}</div>
     <div class="ptr tag tag-accent" id="ptr" aria-hidden="true">Rilascia per aggiornare</div>`;
 }
@@ -851,8 +853,9 @@ function vaiPagina(p) {
   if (p) location.hash = p; else history.pushState(null, '', location.pathname + location.search);
   S.pagina = p; S.menu = false; scrollTo(0, 0); render();
   if (p === 'verifiche') caricaVerifiche();
+  if (p === 'elenchi') caricaElenchi();
 }
-['hashchange', 'popstate'].forEach(ev => addEventListener(ev, () => { S.pagina = paginaDaHash(); render(); if (S.pagina === 'verifiche') caricaVerifiche(); }));
+['hashchange', 'popstate'].forEach(ev => addEventListener(ev, () => { S.pagina = paginaDaHash(); render(); if (S.pagina === 'verifiche') caricaVerifiche(); if (S.pagina === 'elenchi') caricaElenchi(); }));
 
 /* ---------- pagina Verifiche ---------- */
 // Elenco dal backend (?verifiche=1): compiti di Classroom con "VERIFICA" nel titolo, tutto in maiuscolo. Classroom si rilegge
@@ -958,6 +961,104 @@ function renderVerifiche() {
     <div class="ver">
       <section class="blueprint sec ver-sx" aria-label="Elenco delle verifiche">${CORNERS}${sx}</section>
       <section class="blueprint sec ver-dx" id="ver-dettaglio" aria-live="polite">${CORNERS}${dx}</section>
+    </div>`;
+}
+
+/* ---------- pagina Elenchi alunni ---------- */
+// Si spuntano gli alunni, classe per classe, si scrive il titolo (perché sono stati scelti) e «Registra» li salva nello storico.
+// Alunni: elenchi.json in "Dashboard Docente/dati" su Drive (i nomi non stanno nel repo pubblico), letto dal backend con ?elenchi=1.
+// Storico: nel backend (Script Properties), uguale su tutti i dispositivi; registrazioni ed eliminazioni passano dalla coda (anche offline).
+async function caricaElenchi() {
+  if (S.ele.carico || !collegato()) return;
+  S.ele = { ...S.ele, carico: true, err: '' }; render();
+  try {
+    const r = await fetch(S.mock ? './dev/elenchi.json' : urlDati(false) + '&elenchi=1', { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    if (r.headers.get('X-Dashboard-Cache') === '1') throw new Error('offline: mostro l\'ultimo elenco salvato');
+    if (!Array.isArray(j.storico)) throw new Error(j.meta ? 'il backend non gestisce ancora gli elenchi: incolla il nuovo Code.gs e pubblica una nuova versione del deployment' : j.errore || 'risposta non valida');
+    S.ele = { ...S.ele, dati: j, carico: false, err: j.errore || '' };
+    if (!S.mock) ls.set(K.elenchi, j);
+  } catch (e) { S.ele = { ...S.ele, carico: false, err: e.message || String(e) }; }
+  render();
+}
+// Storico mostrato: quello del backend più le registrazioni ancora in coda, meno le eliminazioni in coda; il più recente in alto.
+function storicoElenchi() {
+  const srv = (S.ele.dati && S.ele.dati.storico) || [], ids = new Set(srv.map(e => e.id));
+  const attesa = new Set(S.coda.filter(q => q.azione === 'elenco_registra').map(q => q.elenco.id));
+  const nuovi = S.coda.filter(q => q.azione === 'elenco_registra' && !ids.has(q.elenco.id)).map(q => q.elenco);
+  const via = new Set(S.coda.filter(q => q.azione === 'elenco_elimina').map(q => q.id));
+  return nuovi.concat(srv).filter(e => !via.has(e.id)).map(e => ({ ...e, inAttesa: attesa.has(e.id) }))
+    .sort((a, b) => String(b.data).localeCompare(String(a.data)));
+}
+const dataOra = s => { const d = new Date(s); return isNaN(d) ? '' : pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear() + ' alle ' + hm(d); };
+function salvaSelezione() { ls.set(K.eleSel, S.ele.sel); }
+function registraElenco() {
+  const titolo = S.ele.titolo.trim(), alunni = {};
+  Object.entries(S.ele.sel).forEach(([c, l]) => { if (l && l.length) alunni[c] = l.slice(); });
+  if (!titolo) { const t = document.getElementById('ele-titolo'); if (t) t.focus(); return; }
+  if (!Object.keys(alunni).length) return;
+  const elenco = { id: 'el-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), titolo, data: new Date().toISOString(), alunni };
+  const j = S.ele.dati = S.ele.dati || { classi: {}, note: {}, storico: [] };
+  j.storico = [elenco].concat(j.storico || []);
+  if (!S.mock) ls.set(K.elenchi, j);
+  S.ele = { ...S.ele, sel: {}, titolo: '', fatto: elenco.id }; salvaSelezione();
+  accoda({ azione: 'elenco_registra', elenco }, q => q.azione === 'elenco_registra' && q.elenco.id === elenco.id);
+  render();
+}
+function eliminaElenco(id) {
+  const j = S.ele.dati;
+  if (j && j.storico) { j.storico = j.storico.filter(e => e.id !== id); if (!S.mock) ls.set(K.elenchi, j); }
+  S.coda = S.coda.filter(q => !(q.azione === 'elenco_registra' && q.elenco.id === id)); ls.set(K.coda, S.coda);
+  accoda({ azione: 'elenco_elimina', id }, q => q.azione === 'elenco_elimina' && q.id === id);
+  render();
+}
+function renderElenchi() {
+  const E = S.ele, j = E.dati || {}, roster = j.classi || {}, storico = storicoElenchi();
+  const classi = [...new Set(Object.keys(roster).concat(storico.flatMap(e => Object.keys(e.alunni || {}))))].sort();
+  const cl = classi.includes(E.classe) ? E.classe : classi[0] || '';
+  const alunni = roster[cl] || [], note = (j.note || {})[cl] || {}, sel = E.sel[cl] || [];
+  const nSel = c => (E.sel[c] || []).length, totSel = classi.reduce((a, c) => a + nSel(c), 0);
+  const stato = [E.carico ? 'carico…' : '', E.err].filter(Boolean).join(' · ');
+
+  const tabs = `<div class="ele-tabs" role="tablist" aria-label="Classe">${classi.map(c => `<button class="ele-tab${c === cl ? ' on' : ''}" role="tab" aria-selected="${c === cl}" data-act="ele-classe" data-id="${esc(c)}"><b>${esc(c)}</b><span>${roster[c] ? (nSel(c) ? nSel(c) + ' di ' + roster[c].length + ' spuntati' : roster[c].length + ' alunni') : 'solo storico'}</span></button>`).join('')}</div>`;
+
+  let sx = `<header class="sec-h"><div><span class="kicker">Nuovo elenco · ${esc(cl || '—')}</span><h3>Spunta gli alunni</h3></div>${alunni.length ? `<span class="tag tag-accent">${sel.length}/${alunni.length}</span>` : ''}</header>`;
+  if (!alunni.length) sx += empty(E.carico ? 'Carico gli elenchi…' : 'Nessun alunno per ' + (cl || 'questa classe'),
+    'Gli alunni si leggono da elenchi.json nella cartella Drive “Dashboard Docente/dati” (campo “classi”).');
+  else {
+    sx += `<ol class="plain ele-l">${alunni.map((n, i) => { const on = sel.includes(n); return `<li><label class="ele-a${on ? ' on' : ''}"><span class="ele-i">${i + 1}</span><input type="checkbox" data-ele="${esc(cl)}" value="${esc(n)}"${on ? ' checked' : ''}><span class="col" style="min-width:0"><span class="ele-nm">${esc(n)}</span>${note[n] ? `<span class="small m60">${esc(note[n])}</span>` : ''}</span></label></li>`; }).join('')}</ol>`;
+    sx += `<div class="row"><button class="btn btn-ghost" data-act="ele-tutti">Spunta tutti</button><button class="btn btn-ghost" data-act="ele-nessuno"${sel.length ? '' : ' disabled'}>Togli le spunte di ${esc(cl)}</button></div>`;
+  }
+  const riep = classi.filter(nSel).map(c => c + ' ' + nSel(c)).join(' · ');
+  sx += `<div class="ele-reg">
+    <label class="kicker" for="ele-titolo">Titolo dell'elenco</label>
+    <input class="input" id="ele-titolo" maxlength="200" placeholder="Es. Genitori a colloquio, Recupero 1° trimestre, Assenti all'uscita…" value="${esc(E.titolo)}" list="ele-sugg" autocomplete="off">
+    <datalist id="ele-sugg">${[...new Set(storico.map(e => e.titolo))].slice(0, 12).map(t => `<option value="${esc(t)}">`).join('')}</datalist>
+    <span class="small m62">${totSel ? 'Da registrare: ' + esc(riep) + ' (' + totSel + (totSel === 1 ? ' alunno' : ' alunni') + '). Puoi spuntare alunni di più classi nello stesso elenco.' : 'Spunta almeno un alunno; puoi passare da una classe all\'altra prima di registrare.'}</span>
+    <div class="row"><button class="btn btn-primary" data-act="ele-registra"${totSel && E.titolo.trim() ? '' : ' disabled'}>Registra</button>${E.fatto && storico.some(e => e.id === E.fatto) ? '<span class="small m62">Registrato nello storico.</span>' : ''}</div>
+  </div>`;
+
+  const voci = storico.filter(e => (e.alunni || {})[cl] && e.alunni[cl].length);
+  let dx = `<header class="sec-h"><div><span class="kicker">Storico · ${esc(cl || '—')}</span><h3>Elenchi registrati</h3></div><span class="tag tag-neutral">${voci.length}</span></header>`;
+  if (!voci.length) dx += empty('Nessun elenco registrato per ' + (cl || 'questa classe'), 'Gli elenchi che registri compaiono qui, con il titolo e la data, divisi per classe.');
+  else dx += `<ul class="plain ele-s">${voci.map(e => {
+    const nomi = e.alunni[cl], tot = (roster[cl] || []).length, altre = Object.keys(e.alunni).filter(c => c !== cl && e.alunni[c].length);
+    return `<li><div class="ele-sh"><span class="col" style="min-width:0;gap:2px"><b>${esc(e.titolo)}</b>
+        <span class="small m62">Registrato il ${esc(dataOra(e.data))}${e.inAttesa ? ' · in invio al backend' : ''}${altre.length ? ' · anche ' + esc(altre.map(c => c + ' (' + e.alunni[c].length + ')').join(', ')) : ''}</span></span>
+        <span class="tag tag-accent">${nomi.length}${tot ? '/' + tot : ''}</span></div>
+      <div class="ele-n">${nomi.map(n => `<span>${esc(n)}</span>`).join('')}</div>
+      <div class="row"><button class="btn btn-ghost ele-del" data-act="ele-elimina" data-id="${esc(e.id)}">Elimina dallo storico</button></div></li>`;
+  }).join('')}</ul>`;
+
+  return `<div class="ver-h"><div><span class="kicker">Elenchi alunni · colloqui, recuperi, assenze</span>
+      <h2 class="hd">${storico.length} ${storico.length === 1 ? 'elenco registrato' : 'elenchi registrati'}</h2>
+      ${stato ? `<span class="small m62">${esc(stato)}</span>` : ''}</div>
+      <button class="btn btn-secondary" data-act="ele-aggiorna" ${E.carico ? 'disabled' : ''}>Aggiorna</button></div>
+    ${tabs}
+    <div class="ele">
+      <section class="blueprint sec" aria-label="Nuovo elenco">${CORNERS}${sx}</section>
+      <section class="blueprint sec" aria-label="Storico">${CORNERS}${dx}</section>
     </div>`;
 }
 
@@ -1121,6 +1222,18 @@ document.addEventListener('click', e => {
   else if (a === 'ver-sel') { S.verSel = id; render(); if (matchMedia('(max-width:860px)').matches) { const d = document.getElementById('ver-dettaglio'); if (d) d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }
   else if (a === 'ver-classe') { S.verClasse = id; S.verSel = ''; render(); }
   else if (a === 'ver-aggiorna') aggiornaVerifiche();
+  else if (a === 'ele-classe') { S.ele = { ...S.ele, classe: id, fatto: '' }; render(); }
+  else if (a === 'ele-aggiorna') caricaElenchi();
+  else if (a === 'ele-registra') registraElenco();
+  else if (a === 'ele-tutti' || a === 'ele-nessuno') {
+    const cl = document.querySelector('.ele-tab.on'), c = cl && cl.dataset.id; if (!c) return;
+    S.ele.sel = { ...S.ele.sel, [c]: a === 'ele-tutti' ? ((S.ele.dati && S.ele.dati.classi && S.ele.dati.classi[c]) || []).slice() : [] };
+    S.ele.fatto = ''; salvaSelezione(); render();
+  }
+  else if (a === 'ele-elimina') {
+    if (el.dataset.conferma !== '1') { el.dataset.conferma = '1'; el.textContent = 'Conferma: elimina'; return; }
+    eliminaElenco(id);
+  }
   else if (a === 'rep-riprova') riprovaReport(el.dataset.data);
   else if (a === 'ver-corretta') {
     const v = ((S.ver.dati && S.ver.dati.verifiche) || []).find(x => x.id === S.verSel) || null, sel = document.querySelector('.ver-i.on');
@@ -1168,6 +1281,7 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'ut-text') { e.preventDefault(); addTicket(); }
+  if (e.key === 'Enter' && e.target.id === 'ele-titolo') { e.preventDefault(); registraElenco(); }
   if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset && (e.target.dataset.act === 'pickfase' || (e.target.dataset.act === 'pagina' && e.target.tagName === 'LI'))) { e.preventDefault(); e.target.click(); }
   if (e.key === 'Escape' && S.menu) { S.menu = false; render(); }
 });
@@ -1178,10 +1292,16 @@ document.addEventListener('input', e => {
   else if (t.id === 'ut-text') S.utText = t.value;
   else if (t.id === 'cr-usd') S.crUsd = t.value;
   else if (t.id === 'cr-data') S.crData = t.value;
+  else if (t.id === 'ele-titolo') { S.ele.titolo = t.value; const b = document.querySelector('[data-act="ele-registra"]'); if (b) b.disabled = !(t.value.trim() && Object.values(S.ele.sel).some(l => l && l.length)); }
 });
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'ut-lab') S.utLab = t.value;
+  else if (t.dataset && t.dataset.ele) {
+    const c = t.dataset.ele, ordine = (S.ele.dati && S.ele.dati.classi && S.ele.dati.classi[c]) || [];
+    const l = new Set(S.ele.sel[c] || []); if (t.checked) l.add(t.value); else l.delete(t.value);
+    S.ele.sel = { ...S.ele.sel, [c]: ordine.filter(n => l.has(n)) }; S.ele.fatto = ''; salvaSelezione(); render();
+  }
   else if (t.id === 'doc-file') { inviaDocumenti([...t.files]); t.value = ''; }
   else if (t.dataset && t.dataset.set === 'variante') { S.variante = t.value; ls.set(K.variante, t.value); render(); }
   else if (t.dataset && t.dataset.set === 'tema') { S.tema = t.value; ls.set(K.tema, t.value); render(); }
@@ -1205,7 +1325,8 @@ document.addEventListener('submit', async e => {
 function modelloFase() { const n = adesso(), m = n.getHours() * 60 + n.getMinutes(); return m >= 360 && m < 840 ? 'mattina' : m >= 840 && m < 1195 ? 'pomeriggio' : 'sera'; }
 
 /* ---------- ciclo di vita ---------- */
-if (S.pagina === 'verifiche' || (collegato() && !S.ver.dati)) caricaVerifiche(); // anche per il contatore delle verifiche da correggere
+if (S.pagina === 'verifiche' || (collegato() && !S.ver.dati)) caricaVerifiche();
+if (S.pagina === 'elenchi') caricaElenchi(); // anche per il contatore delle verifiche da correggere
 setInterval(() => {
   if (S.setup || !collegato()) return;
   if (document.visibilityState === 'visible' && verificheInAttesa()) caricaVerifiche();
