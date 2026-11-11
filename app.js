@@ -1013,6 +1013,54 @@ function eliminaElenco(id) {
   accoda({ azione: 'elenco_elimina', id }, q => q.azione === 'elenco_elimina' && q.id === id);
   render();
 }
+// «Esporta»: PDF A4 della selezione (titolo, data di registrazione, alunni divisi per classe), creato nel browser senza librerie.
+// Testo in Helvetica con codifica WinAnsi (lettere accentate, virgolette tipografiche, puntino mediano).
+const WINANSI = { '€': 128, '‚': 130, '„': 132, '…': 133, '‘': 145, '’': 146, '“': 147, '”': 148, '•': 149, '–': 150, '—': 151, '™': 153 };
+const pdfTesto = t => '(' + [...String(t)].map(ch => { const c = ch.codePointAt(0), b = c < 256 && !(c >= 128 && c < 160) ? c : WINANSI[ch] || 63; return b === 40 || b === 41 || b === 92 ? '\\' + String.fromCharCode(b) : String.fromCharCode(b); }).join('') + ')';
+function pdfElenco(e) {
+  const W = 595.28, H = 841.89, M = 56, roster = (S.ele.dati && S.ele.dati.classi) || {}, al = e.alunni || {};
+  const classi = Object.keys(al).sort().filter(c => al[c] && al[c].length), tot = classi.reduce((t, c) => t + al[c].length, 0);
+  const pagine = []; let ops = [], y = H - M;
+  const riga = (t, x, f, sz, col) => ops.push(`BT /${f} ${sz} Tf ${col || '0 0 0'} rg ${x.toFixed(2)} ${y.toFixed(2)} Td ${pdfTesto(t)} Tj ET`);
+  const filetto = () => ops.push(`0.8 0.8 0.8 RG 0.6 w ${M} ${y.toFixed(2)} m ${W - M} ${y.toFixed(2)} l S`);
+  const nuova = () => { pagine.push(ops); ops = []; y = H - M; riga('Progetto Docente · Prof. Diego Caprini — ' + e.titolo + ' (segue)', M, 'F1', 9, '0.45 0.45 0.45'); y -= 24; };
+  const spazio = h => { if (y - h < M + 20) nuova(); };
+  riga('IIS “F. Ciusa” · Nuoro · Laboratorio di Informatica · Prof. Diego Caprini', M, 'F1', 9.5, '0.4 0.4 0.4'); y -= 30;
+  riga(e.titolo, M, 'F2', 20); y -= 20;
+  riga('Registrato il ' + dataOra(e.data) + ' · ' + tot + (tot === 1 ? ' alunno' : ' alunni') + ' in ' + classi.length + (classi.length === 1 ? ' classe' : ' classi'), M, 'F1', 10.5, '0.3 0.3 0.3'); y -= 14;
+  filetto(); y -= 26;
+  classi.forEach(c => {
+    const alto = 25 + al[c].length * 15;
+    spazio(alto <= H - 2 * M - 60 ? alto : 46); // la classe intera nella stessa pagina, se ci sta
+    riga('Classe ' + c, M, 'F2', 13.5); riga(al[c].length + (roster[c] ? ' su ' + roster[c].length : '') + (al[c].length === 1 ? ' alunno' : ' alunni'), W - M - 90, 'F1', 10.5, '0.35 0.35 0.35'); y -= 8;
+    filetto(); y -= 17;
+    al[c].forEach((n, i) => { spazio(15); riga(String(i + 1) + '.', M + 8, 'F1', 10.5, '0.45 0.45 0.45'); riga(n, M + 32, 'F1', 11.5); y -= 15; });
+    y -= 10;
+  });
+  pagine.push(ops);
+  const esportato = new Date(), piede = (i) => `BT /F1 8.5 Tf 0.5 0.5 0.5 rg ${M} 30 Td ${pdfTesto('Esportato dall\'app Progetto Docente il ' + dataOra(esportato.toISOString()) + ' · pagina ' + (i + 1) + ' di ' + pagine.length)} Tj ET`;
+  // oggetti: 1 catalogo, 2 pagine, 3-4 font, poi per ogni pagina: pagina + contenuto
+  const obj = [], kids = pagine.map((_, i) => (5 + i * 2) + ' 0 R').join(' ');
+  obj[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+  obj[2] = `<< /Type /Pages /Kids [${kids}] /Count ${pagine.length} >>`;
+  obj[3] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';
+  obj[4] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';
+  pagine.forEach((o, i) => {
+    const st = o.concat(piede(i)).join('\n');
+    obj[5 + i * 2] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${6 + i * 2} 0 R >>`;
+    obj[6 + i * 2] = `<< /Length ${st.length} >>\nstream\n${st}\nendstream`;
+  });
+  let out = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n'; const off = [];
+  for (let i = 1; i < obj.length; i++) { off[i] = out.length; out += `${i} 0 obj\n${obj[i]}\nendobj\n`; }
+  const xref = out.length;
+  out += `xref\n0 ${obj.length}\n0000000000 65535 f \n` + off.slice(1).map(o => String(o).padStart(10, '0') + ' 00000 n \n').join('');
+  out += `trailer\n<< /Size ${obj.length} /Root 1 0 R /Info << /Title ${pdfTesto(e.titolo)} /Author ${pdfTesto('Prof. Diego Caprini')} >> >>\nstartxref\n${xref}\n%%EOF`;
+  return new Blob([Uint8Array.from(out, ch => ch.charCodeAt(0))], { type: 'application/pdf' });
+}
+function esportaElenco(e) {
+  const nome = (e.titolo.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Elenco alunni') + '.pdf';
+  salvaFile(nome, pdfElenco(e));
+}
 function renderElenchi() {
   const E = S.ele, j = E.dati || {}, roster = j.classi || {}, storico = storicoElenchi();
   const classi = [...new Set(Object.keys(roster).concat(storico.flatMap(e => Object.keys(e.alunni || {}))))].sort();
@@ -1052,7 +1100,7 @@ function renderElenchi() {
         <span class="small m62">Registrato il ${esc(dataOra(e.data))}${e.inAttesa ? ' · in invio al backend' : ''}</span></span>
         <span class="tag tag-accent">${n} ${n === 1 ? 'alunno' : 'alunni'}</span></div>
       ${perClasse(al, true)}
-      <div class="row"><button class="btn btn-ghost ele-del" data-act="ele-elimina" data-id="${esc(e.id)}">Elimina dallo storico</button></div></li>`;
+      <div class="row"><button class="btn btn-secondary ele-del" data-act="ele-esporta" data-id="${esc(e.id)}">Esporta</button><button class="btn btn-ghost ele-del" data-act="ele-elimina" data-id="${esc(e.id)}">Elimina selezione</button></div></li>`;
   }).join('')}</ul>`;
 
   return `<div class="ver-h"><div><span class="kicker">Elenchi alunni · colloqui, recuperi, assenze</span>
@@ -1235,8 +1283,9 @@ document.addEventListener('click', e => {
     S.ele.sel = { ...S.ele.sel, [c]: a === 'ele-tutti' ? ((S.ele.dati && S.ele.dati.classi && S.ele.dati.classi[c]) || []).slice() : [] };
     S.ele.fatto = ''; salvaSelezione(); render();
   }
+  else if (a === 'ele-esporta') { const e = storicoElenchi().find(x => x.id === id); if (e) esportaElenco(e); }
   else if (a === 'ele-elimina') {
-    if (el.dataset.conferma !== '1') { el.dataset.conferma = '1'; el.textContent = 'Conferma: elimina'; return; }
+    if (el.dataset.conferma !== '1') { el.dataset.conferma = '1'; el.textContent = 'Conferma: elimina la selezione'; return; }
     eliminaElenco(id);
   }
   else if (a === 'rep-riprova') riprovaReport(el.dataset.data);
