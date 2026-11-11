@@ -1030,24 +1030,28 @@ function renderElenchi() {
     sx += `<ol class="plain ele-l">${alunni.map((n, i) => { const on = sel.includes(n); return `<li><label class="ele-a${on ? ' on' : ''}"><span class="ele-i">${i + 1}</span><input type="checkbox" data-ele="${esc(cl)}" value="${esc(n)}"${on ? ' checked' : ''}><span class="col" style="min-width:0"><span class="ele-nm">${esc(n)}</span>${note[n] ? `<span class="small m60">${esc(note[n])}</span>` : ''}</span></label></li>`; }).join('')}</ol>`;
     sx += `<div class="row"><button class="btn btn-ghost" data-act="ele-tutti">Spunta tutti</button><button class="btn btn-ghost" data-act="ele-nessuno"${sel.length ? '' : ' disabled'}>Togli le spunte di ${esc(cl)}</button></div>`;
   }
-  const riep = classi.filter(nSel).map(c => c + ' ' + nSel(c)).join(' · ');
+  // Un elenco è unico: contiene gli alunni di tutte le classi, divisi per classe (le schede cambiano solo la classe da spuntare).
+  const perClasse = (al, conTot) => `<div class="ele-c">${Object.keys(al).sort().filter(c => al[c] && al[c].length).map(c => `<div class="ele-cr">
+      <span class="ele-ct"><b>${esc(c)}</b><span>${al[c].length}${conTot && roster[c] ? '/' + roster[c].length : ''}</span></span>
+      <div class="ele-n">${al[c].map(n => `<span>${esc(n)}</span>`).join('')}</div></div>`).join('')}</div>`;
   sx += `<div class="ele-reg">
+    <span class="kicker">Selezione in corso · tutte le classi</span>
+    ${totSel ? perClasse(E.sel, true) + `<div class="row"><span class="small m62">${totSel} ${totSel === 1 ? 'alunno' : 'alunni'} in un unico elenco</span><button class="btn btn-ghost ele-del" data-act="ele-svuota">Togli tutte le spunte</button></div>`
+      : '<span class="small m62">Nessun alunno spuntato. Passa da una classe all\'altra: le spunte restano e finiscono tutte nello stesso elenco.</span>'}
     <label class="kicker" for="ele-titolo">Titolo dell'elenco</label>
     <input class="input" id="ele-titolo" maxlength="200" placeholder="Es. Genitori a colloquio, Recupero 1° trimestre, Assenti all'uscita…" value="${esc(E.titolo)}" list="ele-sugg" autocomplete="off">
     <datalist id="ele-sugg">${[...new Set(storico.map(e => e.titolo))].slice(0, 12).map(t => `<option value="${esc(t)}">`).join('')}</datalist>
-    <span class="small m62">${totSel ? 'Da registrare: ' + esc(riep) + ' (' + totSel + (totSel === 1 ? ' alunno' : ' alunni') + '). Puoi spuntare alunni di più classi nello stesso elenco.' : 'Spunta almeno un alunno; puoi passare da una classe all\'altra prima di registrare.'}</span>
     <div class="row"><button class="btn btn-primary" data-act="ele-registra"${totSel && E.titolo.trim() ? '' : ' disabled'}>Registra</button>${E.fatto && storico.some(e => e.id === E.fatto) ? '<span class="small m62">Registrato nello storico.</span>' : ''}</div>
   </div>`;
 
-  const voci = storico.filter(e => (e.alunni || {})[cl] && e.alunni[cl].length);
-  let dx = `<header class="sec-h"><div><span class="kicker">Storico · ${esc(cl || '—')}</span><h3>Elenchi registrati</h3></div><span class="tag tag-neutral">${voci.length}</span></header>`;
-  if (!voci.length) dx += empty('Nessun elenco registrato per ' + (cl || 'questa classe'), 'Gli elenchi che registri compaiono qui, con il titolo e la data, divisi per classe.');
-  else dx += `<ul class="plain ele-s">${voci.map(e => {
-    const nomi = e.alunni[cl], tot = (roster[cl] || []).length, altre = Object.keys(e.alunni).filter(c => c !== cl && e.alunni[c].length);
+  let dx = `<header class="sec-h"><div><span class="kicker">Storico · tutte le classi</span><h3>Elenchi registrati</h3></div><span class="tag tag-neutral">${storico.length}</span></header>`;
+  if (!storico.length) dx += empty('Nessun elenco registrato', 'Gli elenchi che registri compaiono qui, con il titolo, la data e gli alunni divisi per classe.');
+  else dx += `<ul class="plain ele-s">${storico.map(e => {
+    const al = e.alunni || {}, n = Object.values(al).reduce((t, l) => t + (l || []).length, 0);
     return `<li><div class="ele-sh"><span class="col" style="min-width:0;gap:2px"><b>${esc(e.titolo)}</b>
-        <span class="small m62">Registrato il ${esc(dataOra(e.data))}${e.inAttesa ? ' · in invio al backend' : ''}${altre.length ? ' · anche ' + esc(altre.map(c => c + ' (' + e.alunni[c].length + ')').join(', ')) : ''}</span></span>
-        <span class="tag tag-accent">${nomi.length}${tot ? '/' + tot : ''}</span></div>
-      <div class="ele-n">${nomi.map(n => `<span>${esc(n)}</span>`).join('')}</div>
+        <span class="small m62">Registrato il ${esc(dataOra(e.data))}${e.inAttesa ? ' · in invio al backend' : ''}</span></span>
+        <span class="tag tag-accent">${n} ${n === 1 ? 'alunno' : 'alunni'}</span></div>
+      ${perClasse(al, true)}
       <div class="row"><button class="btn btn-ghost ele-del" data-act="ele-elimina" data-id="${esc(e.id)}">Elimina dallo storico</button></div></li>`;
   }).join('')}</ul>`;
 
@@ -1225,6 +1229,7 @@ document.addEventListener('click', e => {
   else if (a === 'ele-classe') { S.ele = { ...S.ele, classe: id, fatto: '' }; render(); }
   else if (a === 'ele-aggiorna') caricaElenchi();
   else if (a === 'ele-registra') registraElenco();
+  else if (a === 'ele-svuota') { S.ele = { ...S.ele, sel: {}, fatto: '' }; salvaSelezione(); render(); }
   else if (a === 'ele-tutti' || a === 'ele-nessuno') {
     const cl = document.querySelector('.ele-tab.on'), c = cl && cl.dataset.id; if (!c) return;
     S.ele.sel = { ...S.ele.sel, [c]: a === 'ele-tutti' ? ((S.ele.dati && S.ele.dati.classi && S.ele.dati.classi[c]) || []).slice() : [] };
