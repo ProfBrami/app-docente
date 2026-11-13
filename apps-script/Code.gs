@@ -14,7 +14,8 @@
  * Documenti trascinati nell'app (circolari, variazioni, moduli): caricati sulla Files API di Claude, analizzati con le regole
  * della skill gestione-circolari-ciusa (DJ_id, indice DOCS); i documenti richiesti dalle circolari vengono compilati
  * con le Agent Skills (docx/xlsx/pdf) e si scaricano dall'app dopo anteprima e conferma. Gli appuntamenti delle circolari
- * vanno da soli nel calendario (eventiDocumenti_: crea, sposta, segna annullato; mai cancellazioni) e in Scadenze come promemoria.
+ * vanno da soli nel calendario (eventiDocumenti_: crea, sposta, segna annullato; mai cancellazioni) e in Scadenze come promemoria;
+ * gli adempimenti con scadenza diventano promemoria di Apple (promemoriaApple_, PM_APPLE = già creati), ritirati dal Mac o dall'iPhone.
  * Spesa Claude: ogni chiamata somma token e costo stimato per funzione (SPESA_aaaa-mm, SPESA_G per giorno); l'app la mostra
  * nella pagina «Spesa Claude». Verifiche dell'anno: solo su richiesta dall'app (POST aggiorna_verifiche → VER_RICHIESTA);
  * lo script della scuola la vede con ?richiesta_verifiche=1, rilegge Classroom e invia l'elenco, salvato a pezzi in VER_0..n
@@ -78,6 +79,7 @@ function doGet(e) {
   if (p.file) return json_(scaricaDocumento_(p.file));
   if (p.verifiche) return json_(verificheSnap_());
   if (p.elenchi) return json_(elenchiSnap_());
+  if (p.promemoria) return json_({ promemoria: promemoriaApple_() });
   if (p.richiesta_verifiche) return json_({ richiesta: P_().getProperty('VER_RICHIESTA') || null });
   const snap = p.refresh === '1' ? aggiorna() : (leggiSnap_() || aggiorna());
   return json_(snap);
@@ -105,6 +107,7 @@ function doPost(e) {
     if (b.azione === 'documenti') return json_(riceviDocumenti_(b));
     if (b.azione === 'documento_chiudi') return json_(chiudiDocumento_(b));
     if (b.azione === 'documento_conferma') return json_(confermaDocumento_(b));
+    if (b.azione === 'promemoria_fatti') return json_(promemoriaFatti_(b));
     if (b.azione === 'posta_scuola') return json_(riceviPostaScuola_(b));
     if (b.azione === 'verifiche') return json_(riceviVerifiche_(b));
     if (b.azione === 'verifica_corretta') return json_(segnaVerificaCorretta_(b));
@@ -147,6 +150,7 @@ function aggiorna() {
       agenda,
       documenti: documentiSnap_(),
       gestite: numeriDoc_(),
+      promemoria_apple: promemoriaApple_(),
       report: reportSnap_(),
       spesa: spesaSnap_(),
       ricondizionamento: posta.ricondizionamento,
@@ -445,6 +449,7 @@ function ritoccaSnap_() { // aggiorna firme e classi nello snapshot senza rilegg
   snap.spesa = spesaSnap_();
   snap.documenti = documentiSnap_();
   snap.gestite = numeriDoc_();
+  snap.promemoria_apple = promemoriaApple_();
   const doc = scadenzeDoc_();
   snap.supplenze = { ore: unisciSupplenze_(ex.supplenze) };
   snap.scadenze = filtraCircolari_([...senzaDoppioni_((snap.scadenze || []).filter(x => !x.doc && !x.ps && !x.salvata), doc), ...doc, ...postaScuola_(), ...scadenzeSalvate_().filter(x => !(snap.scadenze || []).some(y => !y.salvata && y.t === x.t && y.d === x.d))]).sort((a, b) => (a.d || '9999').localeCompare(b.d || '9999'));
@@ -1048,6 +1053,34 @@ function eventoCalendario_(pm, c, prima) {
   if (orario) { ev.addPopupReminder(60); ev.addPopupReminder(inizio.getHours() * 60 + inizio.getMinutes() + 240); } else ev.addPopupReminder(240);
   pm.ev = ev.getId();
   return nuovo ? 'creato' : 'aggiornato';
+}
+/* ---------- promemoria Apple ---------- */
+// Le cose da fare entro una data (adempimenti delle circolari trascinate) diventano promemoria in Promemoria di Apple;
+// gli appuntamenti con giorno e ora restano eventi del calendario. Il backend non può scrivere in Promemoria: tiene l'elenco
+// di quelli in attesa (?promemoria=1). Li ritira il Mac una volta al giorno (strumenti/promemoria-mac.sh) oppure, se il Mac
+// resta spento, l'iPhone dall'app con il Comando rapido «Promemoria circolari»; chi li crea lo conferma con promemoria_fatti.
+function promemoriaApple_() {
+  const fatti = JSON.parse(P_().getProperty('PM_APPLE') || '[]'), nascoste = JSON.parse(P_().getProperty('H_CIRC') || '[]');
+  const oggi = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'), out = [];
+  JSON.parse(P_().getProperty('DOCS') || '[]').map(jobGet_).filter(j => j && j.analisi).forEach(j => (j.analisi.circolari || []).forEach((c, i) => {
+    if (j.chiuso === 'fatta' || (j.chiuse || {})[i] === 'fatta') return;
+    (c.adempimenti || []).forEach((a, k) => {
+      const id = 'doc-' + j.id + '-' + i + '-' + k, scadenza = DATA_ISO.test(a.scadenza || '') ? a.scadenza : '';
+      if (!a.cosa || fatti.includes(id) || nascoste.includes(id) || (scadenza && scadenza < oggi)) return;
+      out.push({ id, titolo: String(a.cosa).slice(0, 200), scadenza, dal: j.aggiornato || j.creato,
+        note: [(c.numero ? 'Circ. ' + c.numero + ' – ' : '') + (c.titolo || ''), a.documenti, a.riferimenti].filter(Boolean).join(' · ').slice(0, 300) });
+    });
+  }));
+  return out;
+}
+// b: { ids } — promemoria creati in Promemoria di Apple (dal Mac o dall'iPhone): non vengono più proposti.
+function promemoriaFatti_(b) {
+  const ids = (Array.isArray(b.ids) ? b.ids : []).map(String).filter(id => /^doc-[\w-]+$/.test(id)).slice(0, 50);
+  if (!ids.length) return { ok: true, n: 0 };
+  const fatti = JSON.parse(P_().getProperty('PM_APPLE') || '[]').filter(x => !ids.includes(x));
+  P_().setProperty('PM_APPLE', JSON.stringify(ids.concat(fatti).slice(0, 200)));
+  ritoccaSnap_();
+  return { ok: true, n: ids.length };
 }
 // Gli appuntamenti delle circolari sono già in Scadenze come promemoria: lo stesso evento letto dal calendario non si ripete.
 function senzaDoppioni_(scadenze, doc) {

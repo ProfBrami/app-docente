@@ -43,7 +43,7 @@ const CLASSEVIVA_BACHECA = 'https://web.spaggiari.eu/sif/app/default/bacheca_per
 const CLASSEVIVA_COMANDO = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Apri ClasseViva');
 const daClasseviva = i => i.fonte === 'ClasseViva' || i.fonte === 'Segreteria Digitale';
 const claudeLink = t => `href="${(MAC ? 'claude://claude.ai/new?q=' : 'https://claude.ai/new?q=') + encodeURIComponent(t)}"${MAC ? '' : ' target="_blank" rel="noopener"'}`;
-const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda',nascoste:'pd_circ_nascoste',lette:'pd_circ_lette',credito:'pd_credito',verifiche:'pd_verifiche',elenchi:'pd_elenchi',eleSel:'pd_elenchi_sel',docChiuse:'pd_doc_chiuse'};
+const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda',nascoste:'pd_circ_nascoste',lette:'pd_circ_lette',credito:'pd_credito',verifiche:'pd_verifiche',elenchi:'pd_elenchi',eleSel:'pd_elenchi_sel',docChiuse:'pd_doc_chiuse',pmFatti:'pd_pm_fatti'};
 
 const CORNERS = '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
 const ICON_ALERT = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>';
@@ -84,7 +84,7 @@ const S = {
   data: null, loading: false, refreshing: false, error: null, lastFetch: 0, offline: false, cachedAt: null,
   mock: LOCALE && (Q.has('mock') || ls.get(K.endpoint) === 'mock'),
   setup: false, setupErr: '', pin: null, copied: null,
-  done: ls.json(K.done, {}), mod: ls.json(K.mod, {}), coda: ls.json(K.coda, []), nascoste: ls.json(K.nascoste, []), lette: ls.json(K.lette, []), docChiuse: ls.json(K.docChiuse, []), docEsiti: {}, ultimaFirmata: 0, invio: null, invioErr: '', trascina: false, tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
+  done: ls.json(K.done, {}), mod: ls.json(K.mod, {}), coda: ls.json(K.coda, []), nascoste: ls.json(K.nascoste, []), lette: ls.json(K.lette, []), docChiuse: ls.json(K.docChiuse, []), docEsiti: {}, pmFatti: ls.json(K.pmFatti, []), pmChiesto: false, ultimaFirmata: 0, invio: null, invioErr: '', trascina: false, tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
   utLab: LABS[0], utText: '',
   variante: ls.get(K.variante, 'A'), tema: ls.get(K.tema, 'auto'),
   pagina: '', menu: false, credito: ls.json(K.credito, null), crUsd: '', crData: '',
@@ -346,6 +346,12 @@ function renderApp() {
   const domani = addDays(x.today, 1), festaDomani = x.M.festa(domani);
   if (festaDomani && domani.getDay() !== 0 && !/^fuori/.test(festaDomani))
     avvisi.push(alertBox(`<strong>Domani, ${GG[domani.getDay()]} ${dmy(domani)}, niente lezione:</strong> ${esc(festaDomani)}. Prossimo giorno di scuola: ${esc(x.ndLabel)}.`));
+
+  // iPhone/iPad: promemoria che il Mac non ha ritirato nel suo giro giornaliero (Mac spento): si creano da qui
+  const pmA = IOS ? promemoriaInAttesa() : [];
+  if (pmA.length) avvisi.push(alertBox(S.pmChiesto
+    ? `<strong>Li vedi in Promemoria?</strong> <button class="btn btn-primary" data-act="pm-fatto">Sì, fatto</button> <button class="btn btn-ghost" data-act="pm-riprova">No, riprova</button>`
+    : `<strong>${pmA.length === 1 ? 'Un promemoria delle circolari non è ancora' : pmA.length + ' promemoria delle circolari non sono ancora'} in Promemoria</strong>: il Mac non è stato acceso. <a class="btn btn-primary" data-act="pm-apple" href="${esc(linkPromemoria(pmA))}">Aggiungi a Promemoria</a> <span class="small">La prima volta installa il Comando rapido <a href="./strumenti/Promemoria%20circolari.shortcut">Promemoria circolari</a>.</span>`));
 
   const c = cPagina(p ? GRUPPO[p] : '');
   const pagina = !p ? renderOggi(x, n)
@@ -672,6 +678,7 @@ function vociJob(j) {
   const quando = j.creato ? dmy(new Date(j.creato)) + ' ' + hm(new Date(j.creato)) : '', inCorso = j.stato === 'in_coda' || j.stato === 'produzione';
   const stato = { in_coda: 'In analisi…', produzione: 'Compilo i moduli richiesti…', completato: 'Analizzato', errore: 'Errore' }[j.stato] || j.stato;
   const oggi = iso(new Date()), giorno = s2 => s2 ? dmy(new Date(s2 + 'T12:00:00')) : '';
+  const inAttesa = (S.data && Array.isArray(S.data.promemoria_apple) ? S.data.promemoria_apple : []).filter(p => !S.pmFatti.includes(p.id)).map(p => p.id);
   // parti comuni all'invio
   let extra = '';
   if (j.errore) extra += `<span class="avviso">Errore: ${esc(j.errore)}</span>`;
@@ -696,7 +703,7 @@ function vociJob(j) {
     let h = `<li class="li circ"><div class="circ-h"><span class="circ-t">${esc(tit)}</span><span class="tag ${z.pertinenza === 'Ti riguarda' || z.pertinenza === 'Le tue classi' ? 'tag-accent' : 'tag-neutral'}">${esc(z.pertinenza)}</span></div>${origine}`;
     if (z.obiettivo) h += `<span class="circ-n">${esc(z.obiettivo)}</span>`;
     if (z.sintesi) h += `<span class="circ-n m70">${esc(z.sintesi)}</span>`;
-    (z.adempimenti || []).forEach(ad => { h += `<span class="circ-n"><b>Adempimento:</b> ${esc(ad.cosa)}${ad.scadenza ? ' · entro ' + esc(giorno(ad.scadenza)) : ''}${ad.documenti ? ' · ' + esc(ad.documenti) : ''}${ad.riferimenti ? ' · ' + esc(ad.riferimenti) : ''} <span class="m62">(in Scadenze)</span></span>`; });
+    (z.adempimenti || []).forEach((ad, k) => { h += `<span class="circ-n"><b>Adempimento:</b> ${esc(ad.cosa)}${ad.scadenza ? ' · entro ' + esc(giorno(ad.scadenza)) : ''}${ad.documenti ? ' · ' + esc(ad.documenti) : ''}${ad.riferimenti ? ' · ' + esc(ad.riferimenti) : ''} <span class="m62">(in Scadenze${inAttesa.includes('doc-' + j.id + '-' + i + '-' + k) ? ' · in arrivo in Promemoria di Apple' : ''})</span></span>`; });
     (z.promemoria || []).forEach((pm, k) => {
       // l'evento lo mette il backend nel calendario; il file .ics resta solo come riserva finché non c'è
       const cal = pm.superato ? 'sostituito da una circolare successiva' : pm.evento === 'creato' ? 'nel calendario ✓' : pm.evento === 'aggiornato' ? 'calendario aggiornato ✓' : pm.evento === 'annullato' ? 'segnato come annullato nel calendario' : '';
@@ -792,6 +799,7 @@ function renderFoot() {
   return `<section class="blueprint sec foot">${CORNERS}
     <div class="foot-g"><span class="kicker">Tema</span>${seg('tema', S.tema, [['auto', 'Automatico'], ['light', 'Chiaro'], ['dark', 'Scuro']])}</div>
     <div class="foot-g" style="flex:1 1 260px"><span class="kicker">Stato fonti</span><ul class="plain fonti">${fonti.map(([k, f]) => `<li><span class="tag ${f.ok ? 'tag-accent' : 'tag-outline'}">${esc(k)}</span><span class="m65">${f.ok ? esc(f.letti || 0) + ' elementi letti' : esc(f.errore || 'non raggiungibile')}</span></li>`).join('') || '<li class="m65">—</li>'}</ul></div>
+    ${MAC && !S.mock ? (COPIE.collegamento = ls.get(K.endpoint, '') + '\n' + ls.get(K.token, ''), `<div class="foot-g" style="flex:1 1 260px"><span class="kicker">Promemoria di Apple</span><span class="small m65">Le cose da fare con scadenza delle circolari trascinate diventano promemoria (elenco «Scuola»): il Mac li crea una volta al giorno, alla prima accensione. Allo script serve il collegamento: copialo qui e incollalo nel file <code>collegamento.txt</code> (una volta sola).</span><div class="row"><button class="btn btn-ghost" data-act="copy" data-key="collegamento">${S.copied === 'collegamento' ? 'Copiato ✓' : 'Copia collegamento per il Mac'}</button></div></div>`) : ''}
     <div class="foot-g"><span class="kicker">Collegamento</span><div class="row"><button class="btn btn-ghost" data-act="setup">Modifica collegamento</button><button class="btn btn-ghost" data-act="scollega">Scollega</button></div></div>
   </section>`;
 }
@@ -1235,6 +1243,25 @@ async function scaricaDocumento(id) {
     S.copied = 'dl-' + id; render();
   } catch (e) { S.invioErr = 'Download non riuscito: ' + (e.message || e); render(); }
 }
+/* ---------- promemoria Apple ---------- */
+// Le cose da fare con scadenza delle circolari diventano promemoria di Apple. Di norma li crea il Mac una volta al giorno
+// (strumenti/promemoria-mac.sh). Se dopo 26 ore sono ancora in attesa, su iPhone/iPad l'app propone di crearli con il
+// Comando rapido «Promemoria circolari», che riceve una riga per promemoria: titolo|aaaa-mm-gg hh:mm (data dell'avviso).
+const PM_ATTESA = 26 * 3600e3;
+function promemoriaInAttesa() {
+  const l = S.data && Array.isArray(S.data.promemoria_apple) ? S.data.promemoria_apple : [];
+  return l.filter(p => p.id && !S.pmFatti.includes(p.id) && !S.nascoste.includes(p.id) && Date.now() - new Date(p.dal).getTime() > PM_ATTESA);
+}
+function linkPromemoria(l) {
+  const now = new Date();
+  const righe = l.map(p => {
+    let q = null; // avviso: la sera prima alle 18, o la mattina stessa alle 8; senza scadenza domani alle 8
+    if (/^\d{4}-\d{2}-\d{2}$/.test(p.scadenza || '')) { const g = new Date(p.scadenza + 'T08:00:00'), v = new Date(g); v.setDate(v.getDate() - 1); v.setHours(18, 0, 0, 0); q = v > now ? v : g > now ? g : null; }
+    if (!q) { q = addDays(now, 1); q.setHours(8, 0, 0, 0); }
+    return (p.titolo + (p.scadenza ? ' (entro ' + dmy(new Date(p.scadenza + 'T12:00:00')) + ')' : '')).replace(/[|\n\r]+/g, ' ') + '|' + iso(q) + ' ' + hm(q);
+  });
+  return 'shortcuts://run-shortcut?name=' + encodeURIComponent('Promemoria circolari') + '&input=text&text=' + encodeURIComponent(righe.join('\n'));
+}
 // Anteprima di un modulo compilato, sopra la pagina (fuori da render(), che altrimenti la ricaricherebbe a ogni minuto).
 function chiudiAnteprima() { const o = document.getElementById('ant'); if (o) { if (o.dataset.url) URL.revokeObjectURL(o.dataset.url); o.remove(); } }
 async function apriAnteprima(jobId, fileId) {
@@ -1355,6 +1382,14 @@ document.addEventListener('click', e => {
   else if (a === 'ics') scaricaIcs(el.dataset.job, Number(el.dataset.c), Number(el.dataset.p));
   else if (a === 'scarica') scaricaDocumento(el.dataset.file);
   else if (a === 'doc-anteprima') apriAnteprima(el.dataset.job, el.dataset.file);
+  else if (a === 'pm-apple') setTimeout(() => { S.pmChiesto = true; render(); }, 800); // il link apre Comandi rapidi; poi si chiede conferma
+  else if (a === 'pm-riprova') { S.pmChiesto = false; render(); }
+  else if (a === 'pm-fatto') {
+    const ids = promemoriaInAttesa().map(z => z.id);
+    S.pmFatti = [...ids, ...S.pmFatti].slice(0, 300); ls.set(K.pmFatti, S.pmFatti); S.pmChiesto = false;
+    accoda({ azione: 'promemoria_fatti', ids }, () => false);
+    render();
+  }
   else if (a === 'ant-chiudi') chiudiAnteprima();
   else if (a === 'doc-conferma') esitoModulo(el.dataset.file, 'ok');
   else if (a === 'doc-scarta') esitoModulo(el.dataset.file, 'scartato');
