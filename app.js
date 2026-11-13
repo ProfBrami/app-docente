@@ -43,7 +43,7 @@ const CLASSEVIVA_BACHECA = 'https://web.spaggiari.eu/sif/app/default/bacheca_per
 const CLASSEVIVA_COMANDO = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Apri ClasseViva');
 const daClasseviva = i => i.fonte === 'ClasseViva' || i.fonte === 'Segreteria Digitale';
 const claudeLink = t => `href="${(MAC ? 'claude://claude.ai/new?q=' : 'https://claude.ai/new?q=') + encodeURIComponent(t)}"${MAC ? '' : ' target="_blank" rel="noopener"'}`;
-const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda',nascoste:'pd_circ_nascoste',lette:'pd_circ_lette',credito:'pd_credito',verifiche:'pd_verifiche',elenchi:'pd_elenchi',eleSel:'pd_elenchi_sel'};
+const K = {endpoint:'pd_endpoint',token:'pd_token',last:'pd_last',ut:'pd_ut',note:'pd_note',done:'pd_firme_done',variante:'pd_variante',tema:'pd_tema',mod:'pd_firme_mod',coda:'pd_firme_coda',nascoste:'pd_circ_nascoste',lette:'pd_circ_lette',credito:'pd_credito',verifiche:'pd_verifiche',elenchi:'pd_elenchi',eleSel:'pd_elenchi_sel',docChiuse:'pd_doc_chiuse'};
 
 const CORNERS = '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
 const ICON_ALERT = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>';
@@ -84,7 +84,7 @@ const S = {
   data: null, loading: false, refreshing: false, error: null, lastFetch: 0, offline: false, cachedAt: null,
   mock: LOCALE && (Q.has('mock') || ls.get(K.endpoint) === 'mock'),
   setup: false, setupErr: '', pin: null, copied: null,
-  done: ls.json(K.done, {}), mod: ls.json(K.mod, {}), coda: ls.json(K.coda, []), nascoste: ls.json(K.nascoste, []), lette: ls.json(K.lette, []), ultimaFirmata: 0, invio: null, invioErr: '', trascina: false, tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
+  done: ls.json(K.done, {}), mod: ls.json(K.mod, {}), coda: ls.json(K.coda, []), nascoste: ls.json(K.nascoste, []), lette: ls.json(K.lette, []), docChiuse: ls.json(K.docChiuse, []), docEsiti: {}, ultimaFirmata: 0, invio: null, invioErr: '', trascina: false, tickets: ls.json(K.ut, []), note: ls.get(K.note, ''),
   utLab: LABS[0], utText: '',
   variante: ls.get(K.variante, 'A'), tema: ls.get(K.tema, 'auto'),
   pagina: '', menu: false, credito: ls.json(K.credito, null), crUsd: '', crData: '',
@@ -629,8 +629,9 @@ document.addEventListener('dragend', () => { if (S.trascinoFile) { S.trascinoFil
 
 function circolariVisibili(d) {
   const jobs = Array.isArray(d.documenti) ? d.documenti : [];
-  const analizzate = new Set(jobs.flatMap(j => ((j.analisi && j.analisi.circolari) || []).map(z => String(z.numero || '').replace(/\D/g, ''))).filter(Boolean));
-  const numero = t => (String(t).match(/circ\.?\s*(\d+)/i) || [])[1];
+  // la notifica in posta di una circolare trascinata nell'app non si ripete (anche dopo che la si è chiusa: d.gestite)
+  const analizzate = new Set(jobs.flatMap(j => ((j.analisi && j.analisi.circolari) || []).map(z => String(Number((String(z.numero || '').match(/\d+/) || [])[0]) || ''))).concat(Array.isArray(d.gestite) ? d.gestite.map(String) : []).filter(Boolean));
+  const numero = t => (String(t).match(/circ(?:olare)?\.?\s*(?:n\.?\s*)?0*(\d+)/i) || [])[1];
   // "Segna come letta": vale subito sul dispositivo, poi il backend la segna come letta anche in Gmail
   return (Array.isArray(d.circolari) ? d.circolari : []).filter(i => !(i.id && S.nascoste.includes(i.id)) && !analizzate.has(numero(i.titolo)))
     .filter(i => !(i.id && daClasseviva(i) && S.lette.includes(i.id))) // notifica ClasseViva letta = cestinata: esce dall'elenco
@@ -639,49 +640,72 @@ function circolariVisibili(d) {
 function secCircolari(x, c) {
   const { d, aggTxt } = x, g = fonte('gmail');
   const jobs = Array.isArray(d.documenti) ? d.documenti : [];
-  const items = circolariVisibili(d);
-  const nNew = items.filter(i => i.nuova).length;
+  const items = circolariVisibili(d), tras = jobs.flatMap(vociJob);
+  const nNew = items.filter(i => i.nuova).length, tot = items.length + tras.length;
   const tagCls = r => (r === 'Informativa' || r === 'Completato' || r === 'Non di competenza') ? 'tag-neutral' : (r === 'Adempimento' || r === 'Da aprire') ? 'tag-outline' : 'tag-accent';
-  let inner = head('circolari', c, 'Circolari', `<span class="tag tag-accent">${items.length ? (nNew ? nNew + ' nuove' : 'Nessuna nuova') : '—'}</span>`);
+  let inner = head('circolari', c, 'Circolari', `<span class="tag tag-accent">${tot ? (nNew ? nNew + ' nuove' : 'Nessuna nuova') : '—'}</span>`);
   // zona di trascinamento: circolari, variazioni d'orario e moduli scaricati dalla bacheca
   inner += `<div class="drop${S.trascina ? ' on' : ''}" id="drop">
-    <span><b>Trascina qui circolari, variazioni d'orario e moduli</b> (PDF, Word, Excel, immagini): li analizzo con le regole della skill circolari, le supplenze vanno nell'orario e i moduli richiesti vengono compilati.</span>
+    <span><b>Trascina qui circolari, variazioni d'orario e moduli</b> (PDF, Word, Excel, immagini). Parte tutto da solo: la circolare entra nell'elenco, gli appuntamenti vanno nel calendario, le scadenze e i promemoria in Scadenze, le supplenze nell'orario. I moduli richiesti vengono compilati e ti chiedo conferma sull'anteprima.</span>
     <div class="row" style="align-items:center"><button class="btn btn-secondary" data-act="scegli">Scegli file</button>
       <input class="input" id="doc-nota" style="flex:1 1 180px;width:auto" placeholder="Nota per Claude (facoltativa)" aria-label="Nota per Claude"></div>
     <input type="file" id="doc-file" multiple accept=".pdf,.doc,.docx,.odt,.xls,.xlsx,.ods,.txt,image/*" hidden>
     ${S.invio ? `<span class="small">${esc(S.invio)}</span>` : ''}${S.invioErr ? `<span class="small" style="color:var(--color-accent-800)">${esc(S.invioErr)}</span>` : ''}
   </div>`;
-  inner += jobs.map(renderJob).join('');
-  inner += `<span class="small m62">Notifiche in posta (Gmail, ClasseViva) · aggiornato ${esc(aggTxt)}</span>`;
-  if (!items.length) inner += g.ok ? empty('Nessuna notifica da analizzare', 'Le notifiche di ClasseViva, SIF2127, FEA, Cineca e Segreteria compariranno qui.') : empty('Nessun dato da Gmail', g.errore || 'Controlla il backend Apps Script.');
-  else inner += `<ul class="plain">${items.map(i => {
+  inner += `<span class="small m62">Circolari trascinate e notifiche in posta (Gmail, ClasseViva) · aggiornato ${esc(aggTxt)}</span>`;
+  if (!tot) inner += g.ok ? empty('Nessuna circolare da gestire', 'Le circolari trascinate e le notifiche di ClasseViva, SIF2127, FEA, Cineca e Segreteria compariranno qui.') : empty('Nessun dato da Gmail', g.errore || 'Controlla il backend Apps Script.');
+  else inner += `<ul class="plain">${tras.join('')}${items.map(i => {
     const cv = daClasseviva(i), u = cv ? (IOS ? CLASSEVIVA_COMANDO : CLASSEVIVA_BACHECA) : safeUrl(i.url), t = esc(i.titolo);
     return `<li class="li circ"><div class="circ-h">${u ? `<a class="circ-t" href="${esc(u)}"${cv && IOS ? '' : ' target="_blank" rel="noopener"'}${cv ? ' title="Apri in ClasseViva"' : ''}>${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</a>` : `<span class="circ-t">${i.nuova ? '<span class="dot-new" title="Non letta"></span>' : ''}${t}</span>`}<span class="tag ${tagCls(i.rig)}">${esc(i.rig)}</span></div><span class="circ-n m70">${esc(i.nota)}</span>${i.nuova && i.id ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="letta" data-id="${esc(i.id)}"${daClasseviva(i) ? ' title="Segna come letta e sposta la mail di notifica nel Cestino di Gmail"' : ''}>Segna come letta</button>` : ''}${i.id && (i.fonte === 'SIF2127' || i.fonte === 'FEA' || i.rig === 'Adempimento') ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="nascondi" data-id="${esc(i.id)}">Già fatto · nascondi</button>` : ''}</li>`;
   }).join('')}</ul>`;
   return sec('circolari', c, inner + cmdFooter('circolari', true, true), 12);
 }
 
-// Un invio di documenti: stato, circolari analizzate, supplenze trovate, documenti prodotti, domande.
-function renderJob(j) {
-  const quando = j.creato ? dmy(new Date(j.creato)) + ' ' + hm(new Date(j.creato)) : '';
-  const stato = { in_coda: 'In analisi…', produzione: 'Compilo i documenti richiesti…', completato: 'Analizzati', errore: 'Errore' }[j.stato] || j.stato;
-  const a = j.analisi || {};
-  let h = `<div class="job"><div class="circ-h"><span class="small m62">Inviati il ${esc(quando)} · ${esc((j.files || []).join(', '))}</span><span class="tag ${j.stato === 'completato' ? 'tag-neutral' : 'tag-outline'}">${esc(stato)}</span></div>`;
-  if (j.errore) h += `<span class="avviso">Errore: ${esc(j.errore)}</span>`;
-  (a.circolari || []).forEach((z, i) => {
-    const tit = (z.numero ? 'Circ. ' + z.numero + ' – ' : '') + z.titolo + (z.data ? ' (' + z.data + ')' : '');
-    h += `<div class="circ li"><div class="circ-h"><span class="circ-t">${esc(tit)}</span><span class="tag ${z.pertinenza === 'Ti riguarda' || z.pertinenza === 'Le tue classi' ? 'tag-accent' : 'tag-neutral'}">${esc(z.pertinenza)}</span></div>`;
+// Un invio di documenti trascinati diventa una voce dell'elenco per ogni circolare ancora aperta, con «Segna come letta»
+// e «Già fatto · elimina». Supplenze, moduli compilati e avvisi dell'invio stanno nella prima voce; un invio senza
+// circolari (variazioni d'orario, moduli, errori) ha una voce sua.
+const docChiusa = (j, i) => (j.chiuse && j.chiuse[i]) || S.docChiuse.includes(j.id + ':' + i) || S.docChiuse.includes(j.id + ':-1');
+function vociJob(j) {
+  if (S.docChiuse.includes(j.id + ':-1')) return [];
+  const a = j.analisi || {}, circ = a.circolari || [], aperte = circ.map((z, i) => i).filter(i => !docChiusa(j, i));
+  if (circ.length && !aperte.length) return [];
+  const quando = j.creato ? dmy(new Date(j.creato)) + ' ' + hm(new Date(j.creato)) : '', inCorso = j.stato === 'in_coda' || j.stato === 'produzione';
+  const stato = { in_coda: 'In analisi…', produzione: 'Compilo i moduli richiesti…', completato: 'Analizzato', errore: 'Errore' }[j.stato] || j.stato;
+  const oggi = iso(new Date()), giorno = s2 => s2 ? dmy(new Date(s2 + 'T12:00:00')) : '';
+  // parti comuni all'invio
+  let extra = '';
+  if (j.errore) extra += `<span class="avviso">Errore: ${esc(j.errore)}</span>`;
+  if (j.stato === 'produzione') extra += '<span class="circ-n m70">Sto compilando i moduli richiesti: compariranno qui con l\'anteprima.</span>';
+  if (a.variazioni_esaminate) extra += `<span class="circ-n">${(a.supplenze || []).length ? '<b>Supplenze a tuo carico:</b> ' + a.supplenze.map(s2 => esc(s2.classe + ' ' + s2.ora + 'ª ora ' + giorno(s2.data) + (s2.aula ? ' · ' + s2.aula : ''))).join('; ') + ' (inserite nell\'orario)' : 'Variazioni d\'orario esaminate: nessuna supplenza a tuo nome.'}</span>`;
+  (a.domande || []).forEach(q => { extra += `<span class="avviso">Dubbio: ${esc(q)}</span>`; });
+  if (j.calErr) extra += `<span class="avviso">Appuntamenti non ancora nel calendario (${esc(j.calErr)}). Riprovo da solo a ogni aggiornamento: se resta così, il backend va autorizzato a scrivere nel calendario.</span>`;
+  (j.documenti || []).forEach(dc => {
+    const esito = S.docEsiti[dc.file_id] || dc.esito, f = esc(dc.file_id);
+    if (esito === 'scartato') extra += `<span class="circ-n m62">${esc(dc.nome)} · scartato</span>`;
+    else if (esito === 'ok') extra += `<div class="row" style="gap:6px;align-items:center"><button class="btn btn-primary" data-act="scarica" data-file="${f}">${S.copied === 'dl-' + dc.file_id ? 'Scaricato ✓' : 'Scarica ' + esc(dc.nome)}</button><span class="small m62">confermato</span></div>`;
+    else extra += `<div class="modulo"><span class="circ-n"><b>Modulo compilato:</b> ${esc(dc.nome)} · guarda l'anteprima e conferma</span><div class="row" style="gap:6px"><button class="btn btn-secondary" data-act="doc-anteprima" data-job="${esc(j.id)}" data-file="${f}">Anteprima</button><button class="btn btn-primary" data-act="doc-conferma" data-file="${f}">Conferma e scarica</button><button class="btn btn-ghost" data-act="doc-scarta" data-file="${f}">Scarta</button></div></div>`;
+  });
+  if (j.noteProduzione) extra += `<span class="circ-n m70" style="white-space:pre-wrap">${esc(j.noteProduzione)}</span>`;
+  const origine = `<span class="small m62">Trascinata il ${esc(quando)} · ${esc((j.files || []).join(', '))}${inCorso ? ' · ' + esc(stato) : ''}</span>`;
+  const chiudi = (i, modo, testo, titolo) => `<button class="btn btn-ghost" data-act="doc-chiudi" data-job="${esc(j.id)}" data-c="${i}" data-modo="${modo}" title="${esc(titolo)}">${testo}</button>`;
+  if (!circ.length) {
+    return [`<li class="li circ"><div class="circ-h"><span class="circ-t">${esc((j.files || []).join(', ') || 'Documenti trascinati')}</span><span class="tag ${j.stato === 'completato' ? 'tag-neutral' : 'tag-outline'}">${esc(stato)}</span></div><span class="small m62">Trascinati il ${esc(quando)}</span>${extra}${inCorso ? '' : `<div class="row" style="gap:6px">${chiudi(-1, 'fatta', 'Già fatto · elimina', 'Toglie questa voce dall\'elenco')}</div>`}</li>`];
+  }
+  return aperte.map((i, n) => {
+    const z = circ[i], tit = (z.numero ? 'Circ. ' + z.numero + ' – ' : '') + z.titolo + (z.data ? ' (' + z.data + ')' : '');
+    let h = `<li class="li circ"><div class="circ-h"><span class="circ-t">${esc(tit)}</span><span class="tag ${z.pertinenza === 'Ti riguarda' || z.pertinenza === 'Le tue classi' ? 'tag-accent' : 'tag-neutral'}">${esc(z.pertinenza)}</span></div>${origine}`;
     if (z.obiettivo) h += `<span class="circ-n">${esc(z.obiettivo)}</span>`;
     if (z.sintesi) h += `<span class="circ-n m70">${esc(z.sintesi)}</span>`;
-    (z.adempimenti || []).forEach(ad => { h += `<span class="circ-n"><b>Adempimento:</b> ${esc(ad.cosa)}${ad.scadenza ? ' · entro ' + esc(dmy(new Date(ad.scadenza + 'T12:00:00'))) : ''}${ad.documenti ? ' · ' + esc(ad.documenti) : ''}${ad.riferimenti ? ' · ' + esc(ad.riferimenti) : ''}</span>`; });
-    (z.promemoria || []).forEach((pm, k) => { h += `<div class="row" style="align-items:center;gap:8px"><span class="circ-n"><b>Promemoria:</b> ${esc(pm.titolo)} · ${esc(pm.data ? dmy(new Date(pm.data + 'T12:00:00')) : '')}${pm.inizio ? ' ' + esc(pm.inizio) + (pm.fine ? '–' + esc(pm.fine) : '') : ''}${pm.luogo ? ' · ' + esc(pm.luogo) : ''}</span><button class="btn btn-ghost" data-act="ics" data-job="${esc(j.id)}" data-c="${i}" data-p="${k}">Aggiungi al calendario</button></div>`; });
-    h += '</div>';
+    (z.adempimenti || []).forEach(ad => { h += `<span class="circ-n"><b>Adempimento:</b> ${esc(ad.cosa)}${ad.scadenza ? ' · entro ' + esc(giorno(ad.scadenza)) : ''}${ad.documenti ? ' · ' + esc(ad.documenti) : ''}${ad.riferimenti ? ' · ' + esc(ad.riferimenti) : ''} <span class="m62">(in Scadenze)</span></span>`; });
+    (z.promemoria || []).forEach((pm, k) => {
+      // l'evento lo mette il backend nel calendario; il file .ics resta solo come riserva finché non c'è
+      const cal = pm.superato ? 'sostituito da una circolare successiva' : pm.evento === 'creato' ? 'nel calendario ✓' : pm.evento === 'aggiornato' ? 'calendario aggiornato ✓' : pm.evento === 'annullato' ? 'segnato come annullato nel calendario' : '';
+      const riserva = !cal && pm.data && pm.data >= oggi && pm.azione !== 'annulla' && !inCorso;
+      h += `<div class="row" style="align-items:center;gap:8px"><span class="circ-n"><b>${pm.azione === 'annulla' ? 'Appuntamento annullato' : pm.azione === 'modifica' ? 'Appuntamento spostato' : 'Appuntamento'}:</b> ${esc(pm.titolo)} · ${esc(giorno(pm.data))}${pm.inizio ? ' ' + esc(pm.inizio) + (pm.fine ? '–' + esc(pm.fine) : '') : ''}${pm.luogo ? ' · ' + esc(pm.luogo) : ''}${cal ? ` <span class="m62">· ${cal}</span>` : ''}</span>${riserva ? `<button class="btn btn-ghost" data-act="ics" data-job="${esc(j.id)}" data-c="${i}" data-p="${k}">Aggiungi al calendario</button>` : ''}</div>`;
+    });
+    if (n === 0) h += extra;
+    return h + `<div class="row" style="gap:6px">${chiudi(i, 'letta', 'Segna come letta', 'Esce dall\'elenco: scadenze e promemoria restano')}${chiudi(i, 'fatta', 'Già fatto · elimina', 'Esce dall\'elenco insieme ai suoi adempimenti in Scadenze')}</div></li>`;
   });
-  if (a.variazioni_esaminate) h += `<span class="circ-n">${(a.supplenze || []).length ? '<b>Supplenze a tuo carico:</b> ' + a.supplenze.map(s2 => esc(s2.classe + ' ' + s2.ora + 'ª ora ' + dmy(new Date(s2.data + 'T12:00:00')) + (s2.aula ? ' · ' + s2.aula : ''))).join('; ') + ' (inserite nell\'orario)' : 'Variazioni d\'orario esaminate: nessuna supplenza a tuo nome.'}</span>`;
-  (a.domande || []).forEach(q => { h += `<span class="avviso">Domanda: ${esc(q)} (rispondi nella nota del prossimo invio)</span>`; });
-  if ((j.documenti || []).length) h += `<div class="row" style="gap:6px">${j.documenti.map(dc => `<button class="btn btn-primary" data-act="scarica" data-file="${esc(dc.file_id)}">${S.copied === 'dl-' + dc.file_id ? 'Scaricato ✓' : 'Scarica ' + esc(dc.nome)}</button>`).join('')}</div>`;
-  if (j.noteProduzione) h += `<span class="circ-n m70" style="white-space:pre-wrap">${esc(j.noteProduzione)}</span>`;
-  return h + '</div>';
 }
 
 function scadenzeOrdinate(d, today) {
@@ -699,7 +723,7 @@ function secScadenze(x, c) {
   const gm = fonte('gmail'), ca = fonte('calendar'), ps = fonte('posta_scuola');
   if (!list.length) inner += (gm.ok || ca.ok || ps.ok) ? empty('Nessuna scadenza in vista', 'Da posta e Calendar non risultano adempimenti nei prossimi giorni.') : empty('Nessun dato da Gmail e Calendar', [gm.errore, ca.errore].filter(Boolean).join(' · '));
   // gli adempimenti dalla posta della scuola hanno il link alla mail e si nascondono con "Già fatto"
-  else inner += `<ul class="plain">${list.map(s => { const u = safeUrl(s.url); return `<li class="li sc"><span class="col" style="align-items:flex-start"><span class="sc-dd">${s.dd}</span><span style="font-size:11px;color:${s.col};font-weight:${s.w}">${s.count}</span></span><span class="col" style="gap:2px;min-width:0">${u ? `<a href="${u}" target="_blank" rel="noopener" style="font-weight:500;text-wrap:pretty;color:inherit">${esc(s.t)}</a>` : `<span style="font-weight:500;text-wrap:pretty">${esc(s.t)}</span>`}<span class="small m62">${esc(s.src)}</span>${s.ps && s.id ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="nascondi" data-id="${esc(s.id)}">Già fatto · nascondi</button>` : ''}</span></li>`; }).join('')}</ul>`;
+  else inner += `<ul class="plain">${list.map(s => { const u = safeUrl(s.url); return `<li class="li sc"><span class="col" style="align-items:flex-start"><span class="sc-dd">${s.dd}</span><span style="font-size:11px;color:${s.col};font-weight:${s.w}">${s.count}</span></span><span class="col" style="gap:2px;min-width:0">${u ? `<a href="${u}" target="_blank" rel="noopener" style="font-weight:500;text-wrap:pretty;color:inherit">${esc(s.t)}</a>` : `<span style="font-weight:500;text-wrap:pretty">${esc(s.t)}</span>`}<span class="small m62">${esc(s.src)}</span>${(s.ps || s.doc) && s.id ? `<button class="btn btn-ghost" style="align-self:flex-start" data-act="nascondi" data-id="${esc(s.id)}">Già fatto · nascondi</button>` : ''}</span></li>`; }).join('')}</ul>`;
   return sec('scadenze', c, inner, 12);
 }
 
@@ -1211,6 +1235,36 @@ async function scaricaDocumento(id) {
     S.copied = 'dl-' + id; render();
   } catch (e) { S.invioErr = 'Download non riuscito: ' + (e.message || e); render(); }
 }
+// Anteprima di un modulo compilato, sopra la pagina (fuori da render(), che altrimenti la ricaricherebbe a ogni minuto).
+function chiudiAnteprima() { const o = document.getElementById('ant'); if (o) { if (o.dataset.url) URL.revokeObjectURL(o.dataset.url); o.remove(); } }
+async function apriAnteprima(jobId, fileId) {
+  chiudiAnteprima();
+  const j = (S.data.documenti || []).find(x => x.id === jobId), dc = j && (j.documenti || []).find(x => x.file_id === fileId); if (!dc) return;
+  const o = document.createElement('div'); o.id = 'ant'; o.className = 'ant';
+  o.innerHTML = `<div class="ant-b" role="dialog" aria-label="Anteprima del modulo"><div class="ant-h"><b>Anteprima · ${esc(dc.nome)}</b><span class="row" style="gap:6px"><button class="btn btn-primary" data-act="doc-conferma" data-file="${esc(fileId)}">Conferma e scarica</button><button class="btn btn-ghost" data-act="doc-scarta" data-file="${esc(fileId)}">Scarta</button><button class="btn btn-secondary" data-act="ant-chiudi">Chiudi</button></span></div><div class="ant-c" id="ant-c"><span class="small m62">Carico l'anteprima…</span></div></div>`;
+  document.body.appendChild(o);
+  const corpo = h => { const c = document.getElementById('ant-c'); if (c && document.getElementById('ant') === o) c.innerHTML = h; };
+  const note = j.noteProduzione ? `<pre class="ant-t">${esc(j.noteProduzione)}</pre>` : '';
+  const visibile = /pdf|^image\/|^text\//i.test(dc.mime || '') || /\.(pdf|png|jpe?g|txt|csv)$/i.test(dc.nome);
+  const id = dc.anteprima || (visibile ? fileId : '');
+  if (!id) { corpo(`<span class="avviso">Per questo file non c'è un'anteprima da mostrare qui. Qui sotto il riepilogo di come è stato compilato; con «Scarica per controllare» lo apri senza confermarlo.</span><div class="row"><button class="btn btn-secondary" data-act="scarica" data-file="${esc(fileId)}">Scarica per controllare</button></div>${note}`); return; }
+  try {
+    const r = await fetch(ls.get(K.endpoint, '') + '?token=' + encodeURIComponent(ls.get(K.token, '')) + '&file=' + encodeURIComponent(id), { credentials: 'omit', redirect: 'follow' });
+    const f = await r.json(); if (f.errore) throw new Error(f.errore);
+    const bin = atob(f.dati), buf = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    if (/^text\//i.test(f.mime)) corpo(`<pre class="ant-t">${esc(new TextDecoder().decode(buf))}</pre>`);
+    else {
+      const u = URL.createObjectURL(new Blob([buf], { type: f.mime })); o.dataset.url = u;
+      corpo(/^image\//i.test(f.mime) ? `<img src="${u}" alt="Anteprima" style="max-width:100%">` : `<a class="small" href="${u}" target="_blank" rel="noopener">Apri a tutta pagina</a><iframe class="ant-f" src="${u}" title="Anteprima del modulo"></iframe>`);
+    }
+  } catch (e) { corpo(`<span class="avviso">Anteprima non disponibile: ${esc(e.message || e)}</span><div class="row"><button class="btn btn-secondary" data-act="scarica" data-file="${esc(fileId)}">Scarica per controllare</button></div>${note}`); }
+}
+function esitoModulo(fileId, esito) {
+  S.docEsiti = { ...S.docEsiti, [fileId]: esito };
+  accoda({ azione: 'documento_conferma', file: fileId, esito }, q => q.azione === 'documento_conferma' && q.file === fileId);
+  chiudiAnteprima();
+  if (esito === 'ok') scaricaDocumento(fileId); else render();
+}
 // Evento .ics con gli avvisi della skill: la sera prima alle 20:00 e un'ora prima (orari flottanti, CRLF).
 function scaricaIcs(jobId, ci, pi) {
   const j = (S.data.documenti || []).find(x => x.id === jobId), pm = j && j.analisi.circolari[ci].promemoria[pi]; if (!pm) return;
@@ -1300,6 +1354,20 @@ document.addEventListener('click', e => {
   else if (a === 'scegli') { const f = document.getElementById('doc-file'); if (f) f.click(); }
   else if (a === 'ics') scaricaIcs(el.dataset.job, Number(el.dataset.c), Number(el.dataset.p));
   else if (a === 'scarica') scaricaDocumento(el.dataset.file);
+  else if (a === 'doc-anteprima') apriAnteprima(el.dataset.job, el.dataset.file);
+  else if (a === 'ant-chiudi') chiudiAnteprima();
+  else if (a === 'doc-conferma') esitoModulo(el.dataset.file, 'ok');
+  else if (a === 'doc-scarta') esitoModulo(el.dataset.file, 'scartato');
+  else if (a === 'doc-chiudi') {
+    const job = el.dataset.job, ci = Number(el.dataset.c), modo = el.dataset.modo, k = job + ':' + ci;
+    S.docChiuse = [k, ...S.docChiuse.filter(z => z !== k)].slice(0, 300); ls.set(K.docChiuse, S.docChiuse);
+    if (modo === 'fatta') { // via subito anche i suoi adempimenti da Scadenze (i promemoria degli appuntamenti restano)
+      const pre = 'doc-' + job + '-' + (ci < 0 ? '' : ci + '-');
+      S.nascoste = [...(S.data.scadenze || []).filter(z => z.id && String(z.id).indexOf(pre) === 0).map(z => z.id), ...S.nascoste].filter((z, i, v) => v.indexOf(z) === i).slice(0, 300); ls.set(K.nascoste, S.nascoste);
+    }
+    accoda({ azione: 'documento_chiudi', job, c: ci, modo }, q => q.azione === 'documento_chiudi' && q.job === job && q.c === ci);
+    render();
+  }
   else if (a === 'scaricafile') { const r = FILE_REP[el.dataset.file]; if (r) salvaFile(r.nome, blobFile(r)); }
   else if (a === 'ripristina') { const r = firmaRec(((S.data.firme || {})[el.dataset.data] || {})[el.dataset.ora]); S.mod[el.dataset.key] = r.bozza || ''; ls.set(K.mod, S.mod); render(); }
   else if (a === 'fase') { S.pin = id === modelloFase() ? null : id; render(); }
@@ -1337,7 +1405,8 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'ut-text') { e.preventDefault(); addTicket(); }
   if (e.key === 'Enter' && e.target.id === 'ele-titolo') { e.preventDefault(); registraElenco(); }
   if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset && (e.target.dataset.act === 'pickfase' || (e.target.dataset.act === 'pagina' && e.target.tagName === 'LI'))) { e.preventDefault(); e.target.click(); }
-  if (e.key === 'Escape' && S.menu) { S.menu = false; render(); }
+  if (e.key === 'Escape' && document.getElementById('ant')) chiudiAnteprima();
+  else if (e.key === 'Escape' && S.menu) { S.menu = false; render(); }
 });
 document.addEventListener('input', e => {
   const t = e.target;

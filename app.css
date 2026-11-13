@@ -211,8 +211,13 @@ textarea.note{min-height:150px;resize:vertical;font-size:14px;line-height:1.5}
 /* — documenti trascinati — */
 .drop{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px dashed var(--color-divider);font-size:13px}
 .drop.on{border-color:var(--color-accent);background:var(--color-accent-100);color:var(--color-accent-800)}
-.job{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-top:1px solid var(--color-divider)}
-.job .circ.li{padding:8px 0 4px;border-top:1px dashed var(--color-divider)}
+.modulo{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border:1px solid var(--color-accent);background:var(--color-accent-100)}
+.ant{position:fixed;inset:0;z-index:200;background:color-mix(in srgb,#000 55%,transparent);display:flex;align-items:center;justify-content:center;padding:16px}
+.ant-b{background:var(--color-bg);color:var(--color-text);width:min(960px,100%);height:min(90vh,100%);display:flex;flex-direction:column;border:1px solid var(--color-divider)}
+.ant-h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--color-divider)}
+.ant-c{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding:12px}
+.ant-f{flex:1;min-height:300px;width:100%;border:1px solid var(--color-divider);background:#fff}
+.ant-t{margin:0;font-size:13px;white-space:pre-wrap;text-wrap:pretty;font-family:inherit}
 
 /* — pagina Spesa Claude — */
 .sp-big{font-family:var(--font-heading);font-weight:600;font-size:40px;line-height:1;font-variant-numeric:tabular-nums}

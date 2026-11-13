@@ -13,7 +13,8 @@
  * solo le verifiche inserite dal docente: vanno in Scadenze e nelle celle dell'orario delle ore coinvolte.
  * Documenti trascinati nell'app (circolari, variazioni, moduli): caricati sulla Files API di Claude, analizzati con le regole
  * della skill gestione-circolari-ciusa (DJ_id, indice DOCS); i documenti richiesti dalle circolari vengono compilati
- * con le Agent Skills (docx/xlsx/pdf) e si scaricano dall'app.
+ * con le Agent Skills (docx/xlsx/pdf) e si scaricano dall'app dopo anteprima e conferma. Gli appuntamenti delle circolari
+ * vanno da soli nel calendario (eventiDocumenti_: crea, sposta, segna annullato; mai cancellazioni) e in Scadenze come promemoria.
  * Spesa Claude: ogni chiamata somma token e costo stimato per funzione (SPESA_aaaa-mm, SPESA_G per giorno); l'app la mostra
  * nella pagina «Spesa Claude». Verifiche dell'anno: solo su richiesta dall'app (POST aggiorna_verifiche → VER_RICHIESTA);
  * lo script della scuola la vede con ?richiesta_verifiche=1, rilegge Classroom e invia l'elenco, salvato a pezzi in VER_0..n
@@ -102,6 +103,8 @@ function doPost(e) {
     if (b.azione === 'nascondi') return json_(nascondiCircolare_(b));
     if (b.azione === 'letta') return json_(segnaLetta_(b));
     if (b.azione === 'documenti') return json_(riceviDocumenti_(b));
+    if (b.azione === 'documento_chiudi') return json_(chiudiDocumento_(b));
+    if (b.azione === 'documento_conferma') return json_(confermaDocumento_(b));
     if (b.azione === 'posta_scuola') return json_(riceviPostaScuola_(b));
     if (b.azione === 'verifiche') return json_(riceviVerifiche_(b));
     if (b.azione === 'verifica_corretta') return json_(segnaVerificaCorretta_(b));
@@ -133,14 +136,17 @@ function aggiorna() {
     fonti.posta_scuola = statoPostaScuola_();
     fonti.firme = P_().getProperty('ANTHROPIC_API_KEY') ? { ok: true, errore: null, letti: 0 } : { ok: false, errore: 'ANTHROPIC_API_KEY non impostata', letti: 0 };
     puliziaFirme_();
+    try { eventiDocumenti_(); } catch (err) {} // appuntamenti delle circolari non ancora nel calendario (es. prima dell'autorizzazione)
+    const doc = scadenzeDoc_();
 
     const snap = {
       meta: { aggiornato: new Date().toISOString(), fonti },
       circolari: filtraCircolari_(posta.circolari),
-      scadenze: filtraCircolari_([...posta.scadenze, ...cal.scadenze, ...scadenzeDoc_(), ...postaScuola_(), ...scadenzeAgenda_(agenda), ...scadenzeSalvate_().filter(x => !posta.scadenze.some(y => y.t === x.t && y.d === x.d))]).sort((a, b) => (a.d || '9999').localeCompare(b.d || '9999')),
+      scadenze: filtraCircolari_([...posta.scadenze, ...senzaDoppioni_(cal.scadenze, doc), ...doc, ...postaScuola_(), ...scadenzeAgenda_(agenda), ...scadenzeSalvate_().filter(x => !posta.scadenze.some(y => y.t === x.t && y.d === x.d))]).sort((a, b) => (a.d || '9999').localeCompare(b.d || '9999')),
       supplenze: { ore: unisciSupplenze_(extra.supplenze) },
       agenda,
       documenti: documentiSnap_(),
+      gestite: numeriDoc_(),
       report: reportSnap_(),
       spesa: spesaSnap_(),
       ricondizionamento: posta.ricondizionamento,
@@ -438,8 +444,10 @@ function ritoccaSnap_() { // aggiorna firme e classi nello snapshot senza rilegg
   snap.calendario = CALENDARIO;
   snap.spesa = spesaSnap_();
   snap.documenti = documentiSnap_();
+  snap.gestite = numeriDoc_();
+  const doc = scadenzeDoc_();
   snap.supplenze = { ore: unisciSupplenze_(ex.supplenze) };
-  snap.scadenze = filtraCircolari_([...(snap.scadenze || []).filter(x => !x.doc && !x.ps && !x.salvata), ...scadenzeDoc_(), ...postaScuola_(), ...scadenzeSalvate_().filter(x => !(snap.scadenze || []).some(y => !y.salvata && y.t === x.t && y.d === x.d))]).sort((a, b) => (a.d || '9999').localeCompare(b.d || '9999'));
+  snap.scadenze = filtraCircolari_([...senzaDoppioni_((snap.scadenze || []).filter(x => !x.doc && !x.ps && !x.salvata), doc), ...doc, ...postaScuola_(), ...scadenzeSalvate_().filter(x => !(snap.scadenze || []).some(y => !y.salvata && y.t === x.t && y.d === x.d))]).sort((a, b) => (a.d || '9999').localeCompare(b.d || '9999'));
   snap.classi = unisciClassi_(cr.classi, ex.classi);
   snap.meta.fonti.classroom = cr.fonte;
   snap.meta.fonti.posta_scuola = statoPostaScuola_();
@@ -893,12 +901,16 @@ function elaboraDocumenti() {
       job.analisi = analizzaDocumenti_(job);
       (job.analisi.supplenze || []).forEach(aggiungiSupplenza_);
       job.stato = (job.analisi.documenti_da_produrre || []).length ? 'produzione' : 'completato';
+      try { eventiDocumenti_(job); } catch (err) { job.calErr = String(err.message || err).slice(0, 200); } // appuntamenti nel calendario, senza conferma
     } else {
       const r = produciDocumenti_(job);
       job.documenti = r.documenti; job.noteProduzione = r.note.slice(0, 1200); job.stato = 'completato';
     }
   } catch (err) { job.stato = 'errore'; job.errore = String(err.message || err).slice(0, 300); }
   job.aggiornato = new Date().toISOString();
+  const ora = jobGet_(job.id); // chiusure arrivate dall'app mentre Claude lavorava
+  if (ora && ora.chiuse) job.chiuse = ora.chiuse;
+  if (ora && ora.chiuso) job.chiuso = ora.chiuso;
   jobSet_(job);
   ritoccaSnap_();
   if (idx.map(jobGet_).some(j => j && (j.stato === 'in_coda' || j.stato === 'produzione'))) pianifica_('elaboraDocumenti', 2000);
@@ -931,33 +943,146 @@ function produciDocumenti_(job) {
     `Produci questi documenti richiesti dalle circolari, partendo dagli allegati presenti nel container e mantenendone il formato originale:\n` +
     da.map(x => `- ${x.nome_file}: ${x.descrizione}`).join('\n') + (job.nota ? `\nNota del docente: ${job.nota}` : '') +
     `\nNon puoi fare domande: dove manca un dato indispensabile lascia il campo vuoto e annotalo. Salva i file finali nella cartella di output. ` +
+    `Per ogni file finale che non è un PDF salva anche un'anteprima con lo stesso nome seguito da ".anteprima.pdf" (conversione in PDF, per esempio con LibreOffice se è installato); ` +
+    `se non riesci a convertirlo salva "<nome del file>.anteprima.txt" con il contenuto compilato in testo semplice. ` +
     `Alla fine scrivi un riepilogo breve: cosa viene da fonte ufficiale, cosa è proposta tua, cosa è stima, campi lasciati vuoti.`;
   const r = chiamaClaudeAvanzato_({ system: REGOLE_CIRCOLARI + '\n\n' + REGOLE_MODULI, content: [...blocchi, { type: 'text', text: testo }],
     codice: true, skills: ['docx', 'xlsx', 'pdf'], effort: 'high', voce: 'circolari' });
   const caricati = job.files.map(f => f.file_id);
-  const documenti = r.fileIds.filter(id => !caricati.includes(id)).map(id => {
+  const prodotti = r.fileIds.filter(id => !caricati.includes(id)).map(id => {
     const m = UrlFetchApp.fetch('https://api.anthropic.com/v1/files/' + id, { muteHttpExceptions: true, headers: { 'x-api-key': chiave_(), 'anthropic-version': '2023-06-01' } });
     const j = JSON.parse(m.getContentText() || '{}');
     return { nome: j.filename || id, file_id: id, mime: j.mime_type || '' };
   });
+  // "<nome>.anteprima.pdf|txt" è l'anteprima del modulo <nome>: nell'app si guarda prima di confermare
+  const ANT = /\.anteprima\.(pdf|txt)$/i, ant = prodotti.filter(d => ANT.test(d.nome));
+  const documenti = prodotti.filter(d => !ANT.test(d.nome)).map(d => {
+    const a = ant.find(x => x.nome.replace(ANT, '') === d.nome);
+    return a ? Object.assign(d, { anteprima: a.file_id, anteprimaMime: /pdf$/i.test(a.nome) ? 'application/pdf' : 'text/plain' }) : d;
+  });
   return { documenti, note: r.testo };
+}
+// b: { file, esito: 'ok' | 'scartato' } — il docente ha guardato l'anteprima del modulo e lo conferma o lo scarta.
+function confermaDocumento_(b) {
+  const job = JSON.parse(P_().getProperty('DOCS') || '[]').map(jobGet_).find(j => j && (j.documenti || []).some(d => d.file_id === b.file));
+  if (!job) return { ok: true };
+  job.documenti.find(d => d.file_id === b.file).esito = b.esito === 'scartato' ? 'scartato' : 'ok';
+  jobSet_(job); ritoccaSnap_();
+  return { ok: true };
+}
+// b: { job, c, modo } — «Segna come letta» / «Già fatto · elimina» su una circolare trascinata. c: indice della circolare
+// nell'invio (-1: tutto l'invio). 'letta': esce dall'elenco, restano scadenze e promemoria; 'fatta': via anche gli adempimenti.
+function chiudiDocumento_(b) {
+  const job = jobGet_(String(b.job || '')); if (!job) return { ok: true };
+  const modo = b.modo === 'fatta' ? 'fatta' : 'letta', n = ((job.analisi || {}).circolari || []).length, c = Number(b.c);
+  if (!n || !(c >= 0)) job.chiuso = modo;
+  else {
+    job.chiuse = Object.assign({}, job.chiuse, { [c]: modo });
+    if (Object.keys(job.chiuse).length >= n) job.chiuso = 'tutte';
+  }
+  jobSet_(job); ritoccaSnap_();
+  return { ok: true };
+}
+
+/* ---------- appuntamenti delle circolari nel calendario (senza conferma) ---------- */
+const DATA_ISO = /^\d{4}-\d{2}-\d{2}$/, ORA_HM = /^\d{1,2}:\d{2}$/;
+const parole_ = t => Array.from(new Set(String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/).filter(w => w.length > 3 || /\d/.test(w))));
+// Stesso appuntamento: gran parte delle parole in comune e gli stessi numeri (4B non è 5B).
+function simili_(a, b) {
+  const x = parole_(a), y = parole_(b); if (!x.length || !y.length) return false;
+  const num = v => v.filter(w => /\d/.test(w)).sort().join(' ');
+  return num(x) === num(y) && x.filter(w => y.includes(w)).length / Math.min(x.length, y.length) >= 0.6;
+}
+function quando_(data, ora) {
+  const g = data.split('-').map(Number), h = (ora || '0:0').split(':').map(Number);
+  return new Date(g[0], g[1] - 1, g[2], h[0], h[1] || 0);
+}
+// Per ogni promemoria futuro non ancora nel calendario: crea l'evento, oppure sposta / segna annullato quello esistente
+// (lo stesso appuntamento di un invio precedente, o un evento simile nel giorno indicato). Non cancella mai eventi.
+// Se il calendario non è autorizzato l'errore resta in job.calErr e si riprova a ogni aggiornamento.
+function eventiDocumenti_(corrente) {
+  const oggi = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  const jobs = JSON.parse(P_().getProperty('DOCS') || '[]').map(id => corrente && corrente.id === id ? corrente : jobGet_(id)).filter(j => j && j.analisi).reverse();
+  const tutti = () => jobs.flatMap(j => (j.analisi.circolari || []).flatMap(c => (c.promemoria || []).map(pm => ({ j, pm }))));
+  const sporchi = new Set();
+  jobs.forEach(j => (j.analisi.circolari || []).forEach(c => (c.promemoria || []).forEach(pm => {
+    if (pm.evento || pm.superato || !DATA_ISO.test(pm.data || '') || (DATA_ISO.test(pm.data_fine || '') ? pm.data_fine : pm.data) < oggi) return;
+    const prima = DATA_ISO.test(pm.data_precedente || '') ? pm.data_precedente : '', cambia = pm.azione === 'modifica' || pm.azione === 'annulla';
+    if (!pm.ev) {
+      const cand = tutti().filter(x => x.pm !== pm && !x.pm.superato && x.pm.azione !== 'annulla' && simili_(x.pm.titolo, pm.titolo));
+      const old = cand.filter(x => x.pm.data === (prima || pm.data) && (cambia || (x.pm.inizio || '') === (pm.inizio || ''))).pop() || (cambia ? cand.pop() : null);
+      if (old) { old.pm.superato = true; if (old.pm.ev) pm.ev = old.pm.ev; sporchi.add(old.j); }
+    }
+    try { pm.evento = eventoCalendario_(pm, c, prima); delete j.calErr; }
+    catch (err) { j.calErr = String(err.message || err).slice(0, 200); }
+    sporchi.add(j);
+  })));
+  sporchi.forEach(j => jobSet_(j));
+  return sporchi.size;
+}
+function eventoCalendario_(pm, c, prima) {
+  const cal = CalendarApp.getDefaultCalendar();
+  let ev = pm.ev ? cal.getEventById(pm.ev) : null;
+  if (!ev && (pm.azione === 'modifica' || pm.azione === 'annulla')) ev = cal.getEventsForDay(quando_(prima || pm.data)).find(e => simili_(e.getTitle(), pm.titolo)) || null;
+  if (pm.azione === 'annulla') {
+    if (ev && !/^ANNULLATO/.test(ev.getTitle())) ev.setTitle('ANNULLATO – ' + ev.getTitle());
+    return 'annullato';
+  }
+  const descr = [pm.descrizione, (c.numero ? 'Circ. ' + c.numero : c.titolo || '').slice(0, 80), 'Inserito da Progetto Docente'].filter(Boolean).join('\n');
+  const ultimo = DATA_ISO.test(pm.data_fine || '') && pm.data_fine > pm.data ? pm.data_fine : pm.data, orario = ORA_HM.test(pm.inizio || '');
+  let inizio, fine;
+  if (orario) {
+    inizio = quando_(pm.data, pm.inizio); fine = ORA_HM.test(pm.fine || '') ? quando_(ultimo, pm.fine) : null;
+    if (!fine || fine <= inizio) fine = new Date(inizio.getTime() + 3600e3);
+  } else { inizio = quando_(pm.data); fine = quando_(ultimo); fine.setDate(fine.getDate() + 1); } // fine esclusa
+  const nuovo = !ev, piuGiorni = ultimo > pm.data;
+  if (ev) {
+    if (orario) ev.setTime(inizio, fine); else if (piuGiorni) ev.setAllDayDates(inizio, fine); else ev.setAllDayDate(inizio);
+    ev.setTitle(pm.titolo); ev.setDescription(descr); if (pm.luogo) ev.setLocation(pm.luogo);
+  } else {
+    const opz = { description: descr, location: pm.luogo || '' };
+    ev = orario ? cal.createEvent(pm.titolo, inizio, fine, opz) : piuGiorni ? cal.createAllDayEvent(pm.titolo, inizio, fine, opz) : cal.createAllDayEvent(pm.titolo, inizio, opz);
+  }
+  // avvisi della skill: la sera prima alle 20:00 e, se c'è un orario, un'ora prima
+  ev.removeAllReminders();
+  if (orario) { ev.addPopupReminder(60); ev.addPopupReminder(inizio.getHours() * 60 + inizio.getMinutes() + 240); } else ev.addPopupReminder(240);
+  pm.ev = ev.getId();
+  return nuovo ? 'creato' : 'aggiornato';
+}
+// Gli appuntamenti delle circolari sono già in Scadenze come promemoria: lo stesso evento letto dal calendario non si ripete.
+function senzaDoppioni_(scadenze, doc) {
+  const pm = doc.filter(x => x.pm);
+  return scadenze.filter(s => !pm.some(p => p.d === s.d && String(s.t).indexOf(p.tit) === 0));
+}
+function numeriDoc_() { // numeri delle circolari trascinate (anche già chiuse): la loro notifica in posta non ricompare
+  return Array.from(new Set(JSON.parse(P_().getProperty('DOCS') || '[]').map(jobGet_).filter(j => j && j.analisi)
+    .flatMap(j => (j.analisi.circolari || []).map(c => (String(c.numero || '').match(/\d+/) || [])[0])).filter(Boolean)));
 }
 function scaricaDocumento_(id) { // solo file prodotti per i documenti trascinati nell'app
   const idx = JSON.parse(P_().getProperty('DOCS') || '[]');
-  const doc = idx.map(jobGet_).filter(Boolean).flatMap(j => j.documenti || []).find(d => d.file_id === id);
+  let doc = idx.map(jobGet_).filter(Boolean).flatMap(j => j.documenti || []).find(d => d.file_id === id || d.anteprima === id);
   if (!doc) return { errore: 'file non trovato' };
+  if (doc.anteprima === id) doc = { nome: 'Anteprima di ' + doc.nome, mime: doc.anteprimaMime };
   const r = UrlFetchApp.fetch('https://api.anthropic.com/v1/files/' + id + '/content', { muteHttpExceptions: true, headers: { 'x-api-key': chiave_(), 'anthropic-version': '2023-06-01' } });
   if (r.getResponseCode() !== 200) return { errore: 'download non riuscito (' + r.getResponseCode() + ')' };
   return { nome: doc.nome, mime: doc.mime || r.getHeaders()['Content-Type'] || 'application/octet-stream', dati: Utilities.base64Encode(r.getContent()) };
 }
 function documentiSnap_() {
-  return JSON.parse(P_().getProperty('DOCS') || '[]').slice(0, 8).map(jobGet_).filter(Boolean)
-    .map(j => ({ id: j.id, creato: j.creato, stato: j.stato, errore: j.errore || null, files: j.files.map(f => f.nome), analisi: j.analisi || null, documenti: (j.documenti || []).map(d => ({ nome: d.nome, file_id: d.file_id })), noteProduzione: j.noteProduzione || '' }));
+  return JSON.parse(P_().getProperty('DOCS') || '[]').map(jobGet_).filter(j => j && !j.chiuso).slice(0, 8)
+    .map(j => ({ id: j.id, creato: j.creato, stato: j.stato, errore: j.errore || null, files: j.files.map(f => f.nome), analisi: j.analisi || null, chiuse: j.chiuse || {}, calErr: j.calErr || null,
+      documenti: (j.documenti || []).map(d => ({ nome: d.nome, file_id: d.file_id, mime: d.mime || '', anteprima: d.anteprima || null, esito: d.esito || null })), noteProduzione: j.noteProduzione || '' }));
 }
 function scadenzeDoc_() { // adempimenti con scadenza dalle circolari analizzate
-  const out = [];
-  JSON.parse(P_().getProperty('DOCS') || '[]').map(jobGet_).filter(j => j && j.analisi).forEach(j => (j.analisi.circolari || []).forEach((c, i) =>
-    (c.adempimenti || []).forEach((a, k) => out.push({ id: 'doc-' + j.id + '-' + i + '-' + k, doc: true, t: a.cosa, d: /^\d{4}-\d{2}-\d{2}$/.test(a.scadenza) ? a.scadenza : null, src: (c.numero ? 'Circ. ' + c.numero : c.titolo).slice(0, 80) }))));
+  const out = [], oggi = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'), limite = Utilities.formatDate(new Date(Date.now() + 15 * 864e5), TZ, 'yyyy-MM-dd');
+  JSON.parse(P_().getProperty('DOCS') || '[]').map(jobGet_).filter(j => j && j.analisi).forEach(j => (j.analisi.circolari || []).forEach((c, i) => {
+    const circ = (c.numero ? 'Circ. ' + c.numero : c.titolo || '').slice(0, 80), fatta = j.chiuso === 'fatta' || (j.chiuse || {})[i] === 'fatta';
+    if (!fatta) (c.adempimenti || []).forEach((a, k) => out.push({ id: 'doc-' + j.id + '-' + i + '-' + k, doc: true, t: a.cosa, d: DATA_ISO.test(a.scadenza) ? a.scadenza : null, src: circ }));
+    // promemoria degli appuntamenti: compaiono quando mancano 15 giorni o meno, come gli eventi del calendario
+    (c.promemoria || []).forEach((p, k) => {
+      if (p.superato || p.azione === 'annulla' || !DATA_ISO.test(p.data || '') || p.data < oggi || p.data > limite) return;
+      out.push({ id: 'pm-' + j.id + '-' + i + '-' + k, doc: true, pm: true, tit: p.titolo, t: p.titolo + (p.inizio ? ' · ' + p.inizio + (p.fine ? '–' + p.fine : '') : '') + (p.luogo ? ' · ' + p.luogo : ''), d: p.data, src: 'Promemoria · ' + circ });
+    });
+  }));
   return out;
 }
 function aggiungiSupplenza_(x) {
@@ -983,8 +1108,8 @@ const SCHEMA_CIRC = {
         obiettivo: { type: 'string' }, sintesi: { type: 'string', description: 'per le circolari che non lo riguardano: una o due righe' },
         adempimenti: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['cosa', 'scadenza', 'documenti', 'riferimenti'],
           properties: { cosa: { type: 'string' }, scadenza: { type: 'string', description: 'aaaa-mm-gg oppure vuoto' }, documenti: { type: 'string' }, riferimenti: { type: 'string' } } } },
-        promemoria: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['titolo', 'data', 'data_fine', 'inizio', 'fine', 'luogo', 'descrizione'],
-          properties: { titolo: { type: 'string' }, data: { type: 'string', description: 'aaaa-mm-gg' }, data_fine: { type: 'string', description: 'aaaa-mm-gg per eventi di più giorni, altrimenti vuoto' },
+        promemoria: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['titolo', 'data', 'data_fine', 'inizio', 'fine', 'luogo', 'descrizione', 'azione', 'data_precedente'],
+          properties: { azione: { type: 'string', enum: ['nuovo', 'modifica', 'annulla'] }, data_precedente: { type: 'string', description: 'aaaa-mm-gg della data che viene cambiata o annullata, altrimenti vuoto' }, titolo: { type: 'string' }, data: { type: 'string', description: 'aaaa-mm-gg' }, data_fine: { type: 'string', description: 'aaaa-mm-gg per eventi di più giorni, altrimenti vuoto' },
             inizio: { type: 'string', description: 'HH:MM oppure vuoto se giornata intera' }, fine: { type: 'string', description: 'HH:MM oppure vuoto' }, luogo: { type: 'string' }, descrizione: { type: 'string' } } } }
       } } },
     supplenze: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['data', 'ora', 'classe', 'aula', 'sostituisce'],
@@ -1165,7 +1290,7 @@ PER OGNI CIRCOLARE
 2. Obiettivo in una o due frasi.
 3. Pertinenza: "Ti riguarda" (lui o un suo ruolo), "Le tue classi", "Informativa" (eventi senza adempimenti, iniziative collegate), "Non di competenza". Per gli appuntamenti confronta giorno e ore con il suo orario.
 4. Adempimenti a suo carico: cosa, scadenza (aaaa-mm-gg), documenti da produrre, figure di riferimento.
-5. Promemoria per appuntamenti o corsi che riguardano lui o le sue classi (data, ora di inizio e fine, luogo). Segnala conflitti con le sue lezioni solo se le lezioni non vengono sostituite dall'attività.
+5. Promemoria per appuntamenti o corsi che riguardano lui o le sue classi (data, ora di inizio e fine, luogo). Segnala conflitti con le sue lezioni solo se le lezioni non vengono sostituite dall'attività. Ogni promemoria finisce da solo nel suo calendario, senza conferma: titolo breve e stabile, senza data né ora (es. "Consiglio di classe 4^B"). "azione": "nuovo" per un appuntamento nuovo; "modifica" se la circolare sposta o rettifica un appuntamento già comunicato (stesso titolo che avrebbe avuto l'originale, nuova data e ora, e in "data_precedente" la data di prima); "annulla" se lo annulla (data dell'appuntamento annullato).
 6. Evento senza adempimenti di mercoledì: nessun promemoria, solo l'obiettivo in una frase di massimo 30 parole. Non di competenza: sintesi breve, niente promemoria.
 7. Se il numero nel testo non coincide con quello del nome file, segnalalo nella sintesi (potrebbe mancare una circolare).
 Ordina le circolari mettendo per prime quelle che lo riguardano.
@@ -1192,7 +1317,7 @@ DOCUMENTI DA PRODURRE
 - Se una circolare chiede di compilare un allegato presente tra i file (o un documento con formato preciso), mettilo in "documenti_da_produrre" con nome file e cosa compilare. Non produrlo ora.
 
 DOMANDE
-- Se non sei sicuro della pertinenza, una sola domanda diretta in "domande". Non chiedere ciò che è già scritto qui.`;
+- Non fare domande: tutto avviene in automatico e nessuno risponde. "domande" resta vuoto; nel dubbio sulla pertinenza scegli la più prudente (meglio un promemoria in più) e scrivi il dubbio in una riga della sintesi.`;
 
 // Regole per compilare gli allegati (skill gestione-circolari-ciusa, references/modulo-programmazione.md).
 const REGOLE_MODULI = `COMPILAZIONE DEGLI ALLEGATI
